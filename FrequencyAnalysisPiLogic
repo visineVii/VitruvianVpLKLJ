@@ -1,0 +1,158 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+# Define constants for Pi Logic system and quantum mechanics
+pi = np.pi
+omega = 1.0  # Angular frequency (in Hz)
+phi = 1.618  # Golden ratio (for modulation factor)
+lambda_val = 1.0  # Wavelength (in meters)
+alpha_F = 1.0  # Constant field strength (for scaling)
+t_max = 10  # Maximum time for simulation
+x_max = 10  # Maximum space for simulation
+n_tiles = 50  # Number of quantum tiles
+
+# Pi Brane (multi-dimensional object in string theory)
+def pi_brane(x, y, z, t, phi, omega):
+    """ Simulate a Pi Brane as a multi-dimensional quantum field object """
+    return (phi**(x + y + z) + alpha_F) * np.cos(omega * t - (x + y + z) / lambda_val)
+
+# Quantum entanglement simulation (simplified for demonstration)
+def quantum_entanglement(state1, state2, t):
+    """ Model quantum entanglement by introducing a correlation between two states """
+    return np.cos(state1 * t) * np.sin(state2 * t)
+
+# Pi Tile interaction in quantum fields (discrete quantum states)
+def pi_tile_interaction(x, y, z, t, n_tiles, phi, omega):
+    """ Simulate interactions between Pi Tiles (discrete quantum energy packets) """
+    result = 0
+    for i in range(n_tiles):
+        result += pi_brane(x, y, z, t, phi, omega) * (1 + np.sin(i * np.pi / n_tiles))  # Interaction term
+    return result
+
+# Generate space and time variables
+x_vals = np.linspace(-x_max, x_max, 500)
+y_vals = np.linspace(-x_max, x_max, 500)
+z_vals = np.linspace(-x_max, x_max, 500)
+t_vals = np.linspace(0, t_max, 100)
+
+# Generate a 3D grid for space and time
+X, T = np.meshgrid(x_vals, t_vals)
+
+# Calculate wave propagation using Pi Logic
+Z = np.zeros_like(X)
+
+
+# Constants
+c = 3e8  # Speed of light (m/s)
+pi = np.pi
+phi = 0.5  # Phase shift (radians)
+f = 100e6  # Frequency (100 MHz)
+lambda_val = c / f  # Wavelength (m)
+t_vals = np.linspace(0, 1e-6, 1000)  # Time values in microseconds
+x_vals = np.linspace(0, lambda_val, 1000)  # Space values in meters
+
+# Define the RF wave using Pi Logic
+def pi_rf_wave(x, t, f, phi):
+    omega = 2 * pi * f  # Angular frequency
+    k = 2 * pi / lambda_val  # Wave number
+    return np.sin(omega * t - k * x + phi)
+
+# Generate the RF wave
+X, T = np.meshgrid(x_vals, t_vals)
+Z = pi_rf_wave(X, T, f, phi)
+
+# Plot the RF wave
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+ax.plot_surface(X, T, Z, cmap='viridis')
+
+# Add labels
+ax.set_xlabel('Space (x)')
+ax.set_ylabel('Time (t)')
+ax.set_zlabel('Amplitude')
+ax.set_title('Pi Logic RF Wave')
+
+plt.show()
+# Nested loop to iterate over the 2D grid of X and T
+for i in range(len(x_vals)):  # loop for space (x)
+    for j in range(len(t_vals)):  # loop for time (t)
+        Z[j, i] = pi_tile_interaction(X[j, i], X[j, i], X[j, i], T[j, i], n_tiles, phi, omega)  # Corrected access to X and T
+
+# Plotting the wave propagation
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+ax.plot_surface(X, T, Z, cmap='viridis')
+
+ax.set_xlabel('Space (x)')
+ax.set_ylabel('Time (t)')
+ax.set_zlabel('Pi Tile Interaction')
+ax.set_title('Pi Logic Wave Propagation with Quantum Entanglement')
+
+plt.show()
+
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+# Helper Functions for Encoding, Decoding, and Compression
+def cubit_brane_encoder(data, mod_base=17):
+    """Encodes data using modular arithmetic and Pi Logic transformations."""
+    return np.mod(data * np.pi, mod_base)
+
+def cubit_brane_decoder(encoded_data, mod_base=17):
+    """Decodes data from the modular representation."""
+    return np.mod(encoded_data / np.pi, mod_base)
+
+def compress_data(data, compression_factor=0.5):
+    """Compresses data by applying a scaling factor."""
+    return data * compression_factor
+
+def harmonic_flow(data, omega=2 * np.pi):
+    """Applies sinusoidal harmonic flow to data."""
+    return np.sin(omega * data)
+
+# Generate Data for Inverse Math and Its Mirrors
+heatmap_size = 10
+original_data = np.random.rand(heatmap_size, heatmap_size) * 100  # Random data scaled to 100
+inverse_math_data = cubit_brane_encoder(original_data)
+inverse_mirror_data = np.fliplr(inverse_math_data)  # Mirror the inverse math data
+standard_math_data = compress_data(original_data)  # Compressed standard math data
+standard_mirror_data = np.fliplr(standard_math_data)  # Mirror the standard math data
+
+# Introduce Harmonic Flow for Dynamic Interactions
+harmonic_data = harmonic_flow(original_data)
+harmonic_encoded_data = cubit_brane_encoder(harmonic_data)
+
+# Combine Data for 3D Heatmap Visualization
+data_3d = np.vstack((
+    np.hstack((inverse_mirror_data, standard_mirror_data)),
+    np.hstack((inverse_math_data, standard_math_data)),
+    np.hstack((harmonic_encoded_data, harmonic_data))
+))
+
+# 3D Heatmap Visualization
+fig = plt.figure(figsize=(16, 10))
+ax = fig.add_subplot(111, projection='3d')
+
+x_vals = np.linspace(0, data_3d.shape[1], data_3d.shape[1])
+y_vals = np.linspace(0, data_3d.shape[0], data_3d.shape[0])
+X, Y = np.meshgrid(x_vals, y_vals)
+Z = data_3d
+
+# Plot Surface
+surface = ax.plot_surface(X, Y, Z, cmap='viridis', edgecolor='none')
+
+# Add Colorbar
+cbar = fig.colorbar(surface, ax=ax, shrink=0.5, aspect=10)
+cbar.set_label('Value Intensity (Encoded/Compressed/Harmonic)', fontsize=12)
+
+# Set Labels and Title
+ax.set_xlabel('Columns', fontsize=12)
+ax.set_ylabel('Rows', fontsize=12)
+ax.set_zlabel('Amplitude', fontsize=12)
+ax.set_title('3D Pi Logic Heatmap (Vitruvian Vixen Architecture)', pad=20, fontsize=14)
+
+# Show the Plot
+plt.tight_layout()
+plt.show()
