@@ -1,0 +1,89 @@
+# Define the Inverted Math functions
+zero() = 0
+one() = 1
+two() = 2
+three() = 3
+four() = 4
+five() = 5
+six() = 6
+seven() = 7
+eight() = 8
+nine() = 9
+ten() = 10
+
+subtract(x, y) = x - y
+negate(x) = -x
+add(x, y) = x + y
+equals(x, y) = x == y
+leftBracket(x) = x
+
+# Test the functions
+result = add(two(), three())
+println("Result: ", result)
+
+# ASCII representation of pi (π) and phi (φ)
+ascii_pi = 'π'
+ascii_phi = 'φ'
+
+# Mathematical manipulation
+pi_squared = pi^2
+phi_times_pi = phi * pi
+
+# Hebrew letters representation
+hebrew_pi = '\u{05E4}'  # Hebrew letter Pe (פ)
+hebrew_phi = '\u{05E8}'  # Hebrew letter Resh (ר)
+
+# Atbash cipher
+function atbash_cipher(text)
+    atbash_mapping = Dict('a'=>'z', 'b'=>'y', 'c'=>'x', 'd'=>'w', 'e'=>'v',
+                          'f'=>'u', 'g'=>'t', 'h'=>'s', 'i'=>'r', 'j'=>'q',
+                          'k'=>'p', 'l'=>'o', 'm'=>'n', 'n'=>'m', 'o'=>'l',
+                          'p'=>'k', 'q'=>'j', 'r'=>'i', 's'=>'h', 't'=>'g',
+                          'u'=>'f', 'v'=>'e', 'w'=>'d', 'x'=>'c', 'y'=>'b',
+                          'z'=>'a')
+    result = ""
+    for char in text
+        if haskey(atbash_mapping, lowercase(char))
+            result *= atbash_mapping[lowercase(char)]
+        else
+            result *= char
+        end
+    end
+    return result
+
+println("\nAtbash cipher:")
+encrypted_text = atbash_cipher("The quick brown fox jumps over the lazy dog")
+println("Encrypted text: $encrypted_text")
+decrypted_text = atbash_cipher(encrypted_text)
+println("Decrypted text: $decrypted_text")
+
+
+
+using Plots
+
+function golden_vortex(iterations)
+    φ = (1 + sqrt(5)) / 2  # Golden ratio
+
+    x = [0.0]  # x-coordinates of points
+    y = [0.0]  # y-coordinates of points
+
+    for i in 1:iterations
+        angle = 2π * i / φ
+        r = sqrt(i)
+
+        new_x = r * cos(angle)
+        new_y = r * sin(angle)
+
+        push!(x, new_x)
+        push!(y, new_y)
+    end
+
+    scatter(x, y, aspect_ratio=:equal, legend=false)
+    title!("Golden Vortex")
+    xlabel!("X")
+    ylabel!("Y")
+end
+
+# Usage example
+iterations = 1000  # Number of iterations to generate the vortex
+golden_vortex(iterations)

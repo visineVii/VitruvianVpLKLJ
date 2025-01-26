@@ -1,0 +1,72 @@
+using Plots
+
+atbash_alphabet = Dict(
+    'A' => 'Z', 'B' => 'Y', 'C' => 'X', 'D' => 'W', 'E' => 'V', 'F' => 'U', 'G' => 'T',
+    'H' => 'S', 'I' => 'R', 'J' => 'Q', 'K' => 'P', 'L' => 'O', 'M' => 'N', 'N' => 'M',
+    'O' => 'L', 'P' => 'K', 'Q' => 'J', 'R' => 'I', 'S' => 'H', 'T' => 'G', 'U' => 'F',
+    'V' => 'E', 'W' => 'D', 'X' => 'C', 'Y' => 'B', 'Z' => 'A'
+)
+
+function logical_and(a, b)
+    return atbash_alphabet[a] == atbash_alphabet[b]
+end
+
+function logical_or(a, b)
+    return atbash_alphabet[a] != atbash_alphabet[b]
+end
+
+function logical_implies(a, b)
+    return !logical_and(a, !b)
+end
+
+function logical_equals(a, b)
+    return logical_implies(a, b) && logical_implies(b, a)
+end
+
+# Example usage
+a = 'A'
+b = 'B'
+c = 'C'
+
+println("Logical AND:")
+println("A AND A = ", logical_and(a, a))  # true
+println("A AND B = ", logical_and(a, b))  # false
+
+println("\nLogical OR:")
+println("A OR A = ", logical_or(a, a))    # true
+println("A OR B = ", logical_or(a, b))    # true
+
+println("\nLogical IMPLIES:")
+println("A IMPLIES A = ", logical_implies(a, a))  # true
+println("A IMPLIES B = ", logical_implies(a, b))  # false
+
+println("\nLogical EQUALS:")
+println("A EQUALS A = ", logical_equals(a, a))  # true
+println("A EQUALS B = ", logical_equals(a, b))  # false
+
+function golden_vortex(iterations)
+    φ = (1 + sqrt(5)) / 2  # Golden ratio
+
+    x = [0.0]  # x-coordinates of points
+    y = [0.0]  # y-coordinates of points
+
+    for i in 1:iterations
+        angle = 2π * i / φ
+        r = sqrt(i)
+
+        new_x = r * cos(angle)
+        new_y = r * sin(angle)
+
+        push!(x, new_x)
+        push!(y, new_y)
+    end
+
+    scatter(x, y, aspect_ratio=:equal, legend=false)
+    title!("Golden Vortex")
+    xlabel!("X")
+    ylabel!("Y")
+end
+
+# Usage example
+iterations = 1000  # Number of iterations to generate the vortex
+golden_vortex(iterations)
