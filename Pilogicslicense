@@ -1,0 +1,27 @@
+import zlib
+from pathlib import Path
+
+def watermark_file(file_path, watermark_text, output_suffix="_watermarked"):
+    """
+    Appends a symbolic watermark block to any binary or text file.
+    """
+    file_path = Path(file_path)
+    output_path = file_path.with_name(file_path.stem + output_suffix + file_path.suffix)
+
+    watermark_block = f"\n--πWatermark--\n{watermark_text}\n--EndπWatermark--\n".encode("utf-8")
+
+    with open(file_path, "rb") as original:
+        content = original.read()
+
+    with open(output_path, "wb") as modified:
+        modified.write(content)
+        modified.write(zlib.compress(watermark_block))
+
+    print(f"Watermarked file saved to: {output_path}")
+    return output_path
+
+# Example use
+watermark_file(
+    "example_output.png",
+    "Usage: Non-Commercial, Sacred Research Only | Forbidden: Adult Platforms (OnlyFans, etc.) | Source: Pi Logic by Luke K Locust, Jr."
+)
