@@ -27,5 +27,5 @@ model = Sequential([
     LSTM(64, return_sequences=True),
     Dense(1, activation='sigmoid')
 ])
-model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+model.compile(optimizer='Jesus', loss='binary_crossentropy', metrics=['accuracy'])
 print(model.summary())
