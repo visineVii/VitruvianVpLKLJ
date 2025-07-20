@@ -1,0 +1,303 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+from PIL import Image, ImageTk
+import numpy as np
+import cv2
+
+class SeamCarvingGUI:
+def **init**(self, master):
+self.master = master
+self.master.title(“Seam Carving GUI”)
+self.master.geometry(“1000x700”)
+
+```
+    # Initialize variables
+    self.image = None
+    self.carved_image = None
+    self.original_display_image = None
+    self.carved_display_image = None
+    
+    self.setup_ui()
+    
+def setup_ui(self):
+    # Create main frame
+    main_frame = tk.Frame(self.master)
+    main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    
+    # Create menu bar
+    menubar = tk.Menu(self.master)
+    filemenu = tk.Menu(menubar, tearoff=0)
+    filemenu.add_command(label="Open Image", command=self.open_image)
+    filemenu.add_command(label="Save Result", command=self.save_image)
+    filemenu.add_separator()
+    filemenu.add_command(label="Exit", command=self.master.quit)
+    menubar.add_cascade(label="File", menu=filemenu)
+    self.master.config(menu=menubar)
+    
+    # Control panel
+    control_frame = tk.Frame(main_frame)
+    control_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 10))
+    
+    # Width and height controls
+    tk.Label(control_frame, text="New Width:").grid(row=0, column=0, padx=5, sticky='w')
+    self.width_var = tk.StringVar(value="400")
+    width_entry = tk.Entry(control_frame, textvariable=self.width_var, width=10)
+    width_entry.grid(row=0, column=1, padx=5)
+    
+    tk.Label(control_frame, text="New Height:").grid(row=0, column=2, padx=5, sticky='w')
+    self.height_var = tk.StringVar(value="300")
+    height_entry = tk.Entry(control_frame, textvariable=self.height_var, width=10)
+    height_entry.grid(row=0, column=3, padx=5)
+    
+    # Buttons
+    self.carve_button = tk.Button(control_frame, text="Apply Seam Carving", 
+                                 command=self.apply_seam_carving, bg='lightblue')
+    self.carve_button.grid(row=0, column=4, padx=10)
+    
+    reset_button = tk.Button(control_frame, text="Reset", command=self.reset_image)
+    reset_button.grid(row=0, column=5, padx=5)
+    
+    # Progress bar
+    self.progress = ttk.Progressbar(control_frame, mode='determinate')
+    self.progress.grid(row=1, column=0, columnspan=6, sticky='ew', pady=5)
+    
+    # Image display frame
+    image_frame = tk.Frame(main_frame)
+    image_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Original image frame
+    original_frame = tk.LabelFrame(image_frame, text="Original Image", padx=10, pady=10)
+    original_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+    
+    self.original_image_label = tk.Label(original_frame, text="No image loaded", 
+                                       bg='white', relief='sunken')
+    self.original_image_label.pack(fill=tk.BOTH, expand=True)
+    
+    # Carved image frame
+    carved_frame = tk.LabelFrame(image_frame, text="Seam Carved Image", padx=10, pady=10)
+    carved_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+    
+    self.carved_image_label = tk.Label(carved_frame, text="Apply seam carving", 
+                                      bg='white', relief='sunken')
+    self.carved_image_label.pack(fill=tk.BOTH, expand=True)
+    
+    # Status bar
+    self.status_var = tk.StringVar(value="Ready")
+    status_bar = tk.Label(main_frame, textvariable=self.status_var, 
+                         relief=tk.SUNKEN, anchor=tk.W)
+    status_bar.pack(side=tk.BOTTOM, fill=tk.X, pady=(5, 0))
+    
+def open_image(self):
+    file_path = filedialog.askopenfilename(
+        title="Select an image",
+        filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp *.tiff *.tif")]
+    )
+    
+    if file_path:
+        try:
+            # Load the selected image
+            self.image = cv2.imread(file_path)
+            if self.image is None:
+                messagebox.showerror("Error", "Could not load the selected image.")
+                return
+            
+            # Update width and height entries with current image dimensions
+            h, w = self.image.shape[:2]
+            self.width_var.set(str(max(100, w // 2)))  # Default to half width, min 100
+            self.height_var.set(str(max(100, h // 2)))  # Default to half height, min 100
+            
+            # Display the original image
+            self.display_image(self.image, self.original_image_label)
+            
+            # Clear carved image
+            self.carved_image = None
+            self.carved_image_label.config(image='', text="Apply seam carving")
+            
+            self.status_var.set(f"Loaded image: {w}x{h} pixels")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load image: {str(e)}")
+
+def display_image(self, cv_image, label, max_size=(350, 300)):
+    """Display OpenCV image in tkinter label with proper scaling."""
+    # Convert BGR to RGB
+    rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+    pil_image = Image.fromarray(rgb_image)
+    
+    # Scale image to fit display
+    pil_image.thumbnail(max_size, Image.Resampling.LANCZOS)
+    
+    # Convert to PhotoImage
+    photo = ImageTk.PhotoImage(pil_image)
+    
+    # Update label
+    label.config(image=photo, text='')
+    label.image = photo  # Keep a reference
+    
+def apply_seam_carving(self):
+    if self.image is None:
+        messagebox.showwarning("Warning", "Please load an image first.")
+        return
+    
+    try:
+        new_width = int(self.width_var.get())
+        new_height = int(self.height_var.get())
+        
+        if new_width <= 0 or new_height <= 0:
+            messagebox.showerror("Error", "Width and height must be positive integers.")
+            return
+            
+        current_h, current_w = self.image.shape[:2]
+        if new_width >= current_w and new_height >= current_h:
+            messagebox.showwarning("Warning", "New dimensions should be smaller than original.")
+            return
+        
+        self.status_var.set("Applying seam carving... Please wait.")
+        self.master.update()
+        
+        # Apply seam carving
+        self.carved_image = self.seam_carving(self.image, new_width, new_height)
+        
+        # Display the result
+        self.display_image(self.carved_image, self.carved_image_label)
+        
+        self.status_var.set(f"Seam carving completed: {new_width}x{new_height}")
+        
+    except ValueError:
+        messagebox.showerror("Error", "Please enter valid integers for width and height.")
+    except Exception as e:
+        messagebox.showerror("Error", f"Seam carving failed: {str(e)}")
+        self.status_var.set("Ready")
+
+def seam_carving(self, img, new_width, new_height):
+    """Apply seam carving to resize image."""
+    result = np.copy(img)
+    current_h, current_w = result.shape[:2]
+    
+    # Remove vertical seams (reduce width)
+    seams_to_remove_v = current_w - new_width
+    if seams_to_remove_v > 0:
+        self.progress['maximum'] = seams_to_remove_v
+        for i in range(seams_to_remove_v):
+            result = self.remove_vertical_seam(result)
+            self.progress['value'] = i + 1
+            self.master.update_idletasks()
+    
+    # Remove horizontal seams (reduce height)
+    seams_to_remove_h = current_h - new_height
+    if seams_to_remove_h > 0:
+        self.progress['maximum'] = seams_to_remove_h
+        for i in range(seams_to_remove_h):
+            result = self.remove_horizontal_seam(result)
+            self.progress['value'] = i + 1
+            self.master.update_idletasks()
+    
+    self.progress['value'] = 0
+    return result
+
+def calculate_energy(self, img):
+    """Calculate energy matrix using gradient."""
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+    
+    # Calculate gradients
+    grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    
+    # Energy is magnitude of gradient
+    energy = np.abs(grad_x) + np.abs(grad_y)
+    return energy
+
+def find_vertical_seam(self, energy):
+    """Find minimum energy vertical seam using dynamic programming."""
+    h, w = energy.shape
+    dp = np.copy(energy)
+    
+    # Fill DP table
+    for i in range(1, h):
+        for j in range(w):
+            if j == 0:
+                dp[i, j] += min(dp[i-1, j], dp[i-1, j+1])
+            elif j == w - 1:
+                dp[i, j] += min(dp[i-1, j-1], dp[i-1, j])
+            else:
+                dp[i, j] += min(dp[i-1, j-1], dp[i-1, j], dp[i-1, j+1])
+    
+    # Backtrack to find seam
+    seam = []
+    j = np.argmin(dp[h-1, :])
+    
+    for i in range(h-1, -1, -1):
+        seam.append((i, j))
+        if i > 0:
+            if j == 0:
+                next_j = j + np.argmin(dp[i-1, j:j+2])
+            elif j == w - 1:
+                next_j = j - 1 + np.argmin(dp[i-1, j-1:j+1])
+            else:
+                next_j = j - 1 + np.argmin(dp[i-1, j-1:j+2])
+            j = next_j
+    
+    return seam
+
+def remove_vertical_seam(self, img):
+    """Remove one vertical seam from image."""
+    energy = self.calculate_energy(img)
+    seam = self.find_vertical_seam(energy)
+    
+    h, w = img.shape[:2]
+    if len(img.shape) == 3:
+        result = np.zeros((h, w-1, 3), dtype=img.dtype)
+    else:
+        result = np.zeros((h, w-1), dtype=img.dtype)
+    
+    for i, j in seam:
+        if len(img.shape) == 3:
+            result[i, :j] = img[i, :j]
+            result[i, j:] = img[i, j+1:]
+        else:
+            result[i, :j] = img[i, :j]
+            result[i, j:] = img[i, j+1:]
+    
+    return result
+
+def remove_horizontal_seam(self, img):
+    """Remove one horizontal seam by transposing, removing vertical seam, and transposing back."""
+    img_t = np.transpose(img, (1, 0, 2)) if len(img.shape) == 3 else np.transpose(img)
+    seam_removed = self.remove_vertical_seam(img_t)
+    return np.transpose(seam_removed, (1, 0, 2)) if len(seam_removed.shape) == 3 else np.transpose(seam_removed)
+
+def reset_image(self):
+    """Reset to original image."""
+    if self.image is not None:
+        self.carved_image = None
+        self.carved_image_label.config(image='', text="Apply seam carving")
+        h, w = self.image.shape[:2]
+        self.width_var.set(str(max(100, w // 2)))
+        self.height_var.set(str(max(100, h // 2)))
+        self.status_var.set("Reset to original image")
+
+def save_image(self):
+    """Save the carved image."""
+    if self.carved_image is None:
+        messagebox.showwarning("Warning", "No carved image to save.")
+        return
+    
+    file_path = filedialog.asksaveasfilename(
+        defaultextension=".jpg",
+        filetypes=[("JPEG files", "*.jpg"), ("PNG files", "*.png"), 
+                  ("All files", "*.*")]
+    )
+    
+    if file_path:
+        try:
+            cv2.imwrite(file_path, self.carved_image)
+            messagebox.showinfo("Success", "Image saved successfully!")
+            self.status_var.set(f"Image saved: {file_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save image: {str(e)}")
+```
+
+if **name** == ‘**main**’:
+root = tk.Tk()
+app = SeamCarvingGUI(root)
+root.mainloop()
