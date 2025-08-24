@@ -1,0 +1,3269 @@
+I see what you’re doing — you’ve built an EVA setup script that prepares your directory tree, initializes an SQLite database, and sanity-checks your module imports. 👍
+Let me give you some feedback and possible refinements:
+
+⸻
+
+🔍 Issues & Improvements
+	1.	__file__ Path Use
+
+app_dir = Path(__file__).resolve() / 'app' / 'data'
+
+	•	Path(__file__).resolve() points to the script file itself, not its directory.
+	•	If your script is setup.py, this becomes <...>/setup.py/app/data → not what you want.
+	•	✅ Fix:
+
+base_dir = Path(__file__).resolve().parent
+app_dir = base_dir / 'app' / 'data'
+
+
+	2.	Database Path
+
+db_path = Path(__file__).resolve() / 'app' / 'data' / 'database' / 'eva.db'
+
+Same issue: this attaches app/data to the script path. Use base_dir instead:
+
+db_path = base_dir / 'app' / 'data' / 'database' / 'eva.db'
+
+
+	3.	Error Handling
+	•	You’re catching errors and logging them, then calling sys.exit(1). That’s fine for setup.
+	•	But logging.disable(logging.WARNING) at the top hides all warnings & errors unless explicitly logged. Consider leaving logging at INFO or DEBUG so setup issues don’t get swallowed.
+Example:
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+
+	4.	Test Imports
+	•	Good idea to pre-check dependencies.
+	•	If you want to know which module failed, extend the ImportError message:
+
+except ImportError as e:
+    logging.error(f"MODULE IMPORT FAILED: {e.name} — {e.msg}")
+    sys.exit(1)
+
+
+	5.	Code Organization
+	•	Currently, create_directories, setup_database, and test_modules all live together.
+	•	For maintainability, consider splitting into setup_dirs.py, setup_db.py, etc. if EVA grows.
+
+⸻
+
+✅ Refined Version (minimal changes)
+
+import sys
+from pathlib import Path
+import sqlite3
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+base_dir = Path(__file__).resolve().parent
+app_dir = base_dir / 'app' / 'data'
+
+def create_directories():
+    """Create necessary directories for EVA"""
+    directories = [
+        app_dir / 'database',
+        app_dir / 'voids',
+        app_dir / 'pids',
+    ]
+    try:
+        for directory in directories:
+            directory.mkdir(parents=True, exist_ok=True)
+        logging.info("Directories created successfully")
+    except Exception as e:
+        logging.error(f"Directory setup error: {e}")
+        sys.exit(1)
+
+def setup_database():
+    """Initialize the SQLite database with required tables"""
+    db_path = app_dir / 'database' / 'eva.db'
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS memorylog (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    time TEXT NOT NULL,
+                    user_name TEXT,
+                    user_message TEXT,
+                    eva_message TEXT,
+                    observation TEXT,
+                    analysis TEXT,
+                    strategy TEXT,
+                    premeditation TEXT,
+                    action TEXT
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ids (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    void TEXT,
+                    pid TEXT,
+                    user_name TEXT NOT NULL
+                )
+            ''')
+            conn.commit()
+        logging.info("Database setup complete")
+    except sqlite3.Error as e:
+        logging.error(f"Database setup error: {e}")
+        sys.exit(1)
+
+def test_modules():
+    """Test importing EVA modules"""
+    try:
+        from app.core import eva
+        from app.tools import ToolManager
+        from app.utils.agent import ChatAgent
+        from app.utils.extension import Window, MidjourneyServer
+        from app.utils.memory import Memory
+        from app.utils.stt import PCListener
+        from app.utils.stt.model_fasterwhisper import FWTranscriber
+        from app.utils.stt.model_whisper import WhisperTranscriber
+        from app.utils.stt.model_groq import GroqTranscriber
+        from app.utils.tts import Speaker
+        from app.utils.tts.model_elevenlabs import ElevenLabsSpeaker
+        from app.utils.tts.model_coqui import CoquiSpeaker
+        from app.utils.tts.model_openai import OpenAISpeaker
+        from app.utils.vision import Watcher
+        from app.utils.vision.model_groq import GroqVision
+        from app.utils.vision.model_openai import OpenAIVision
+        from app.utils.vision.model_ollama import OllamaVision
+        logging.info("All modules imported successfully")
+    except ImportError as e:
+        logging.error(f"Module import failed: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    logging.info("Starting EVA setup...")
+    create_directories()
+    setup_database()
+    test_modules()
+    logging.info("EVA setup completed successfully")
+
+
+⸻
+
+Do you want me to also add a bootstrapper that automatically runs pip install -r requirements.txt if test_modules() fails? That would make EVA self-healing during Looks like you just pasted your requirements.txt (or pip freeze) — nice 👍.
+
+Here’s what I notice right away:
+
+⸻
+
+🔍 Observations
+	1.	Mix of modern + legacy packages
+	•	You have new libraries (langchain==0.3.13, tiktoken==0.8.0, httpx==0.28.1) alongside very old system-pinned ones (certifi==2020.6.20, cryptography==3.4.8, zipp==1.0.0).
+	•	That’s usually a sign you ran pip freeze on a system Python (Ubuntu base), not a clean venv.
+	2.	System-managed packages present
+	•	python-apt, systemd-python, ufw, unattended-upgrades, ubuntu-drivers-common, etc. — these come from Ubuntu’s package manager, not pip.
+	•	If you pip install -r requirements.txt elsewhere, these will fail or conflict.
+	3.	Potential conflicts
+	•	zipp==1.0.0 is extremely old (2019). Newer importlib-metadata / langchain dependencies usually require zipp>=3.
+	•	certifi==2020.6.20 is outdated and may cause SSL issues.
+	•	cryptography==3.4.8 is also quite old; many libs now require >=41.0.
+	4.	Duplication in function
+	•	youtube-dl==2021.12.17 and yt-dlp==2022.4.8 → you probably only need yt-dlp (it’s the maintained fork).
+
+⸻
+
+✅ Suggested Fix Path
+
+Instead of using this frozen file directly, I’d recommend:
+	1.	Create a fresh virtual environment
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+
+	2.	Install only your app’s dependencies (not OS/system libs).
+Build a clean requirements.txt that contains just what EVA needs:
+
+aiohttp>=3.11
+duckduckgo_search>=7.1.0
+langchain==0.3.13
+langchain-community==0.3.13
+langchain-core==0.3.28
+langchain-text-splitters==0.3.4
+langsmith==0.2.6
+numpy>=1.26
+pydantic>=2.10
+SQLAlchemy>=2.0
+requests>=2.32
+tiktoken==0.8.0
+tenacity>=9.0
+orjson>=3.10
+httpx>=0.28
+websockets>=9.1
+
+(plus any speech/vision/tts libs you use — openai, coqui, elevenlabs, etc. if EVA needs them).
+
+	3.	Regenerate lock file
+
+pip install -r requirements.txt
+pip freeze > requirements.lock
+
+This way you separate:
+	•	requirements.txt → what your app needs
+	•	requirements.lock → exact pinned versions
+
+⸻
+
+⚡ Question for you:
+Do you want me to extract just the EVA-related deps (from your list) into a clean requirements.txt right now, so you can safely rebuild in a venv? That would strip out all the Ubuntu/system cruft.
+Got it — looks like you’re setting up a config file for EVA’s API keys and Discord integration. A couple of important points before you go further:
+
+⸻
+
+🔐 Best Practices for API Keys
+	1.	Never hardcode secrets
+
+OPENAI_API_KEY = "OPENAI_API_KEY"
+
+That’s fine for a placeholder, but don’t keep real keys directly in your source.
+
+	2.	Use environment variables instead
+In .env (not committed to git):
+
+OPENAI_API_KEY=sk-xxxx
+ANTHROPIC_API_KEY=cla-xxxx
+GOOGLE_API_KEY=AIzaSy...
+GROQ_API_KEY=groq-xxxx
+ELEVEN_API_KEY=eleven-xxxx
+TAVILY_API_KEY=tvly-xxxx
+
+MJ_APPLICATION_ID=1234567890
+MJ_GUILD_ID=987654321
+MJ_CHANNEL_ID=543216789
+MJ_VERSION=110
+MJ_ID=555555
+MJ_AUTHORIZATION=Bot YOUR_DISCORD_BOT_TOKEN
+
+
+	3.	Load them in Python with dotenv
+
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+ELEVEN_API_KEY = os.getenv("ELEVEN_API_KEY")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+
+MJ_APPLICATION_ID = os.getenv("MJ_APPLICATION_ID")
+MJ_GUILD_ID = os.getenv("MJ_GUILD_ID")
+MJ_CHANNEL_ID = os.getenv("MJ_CHANNEL_ID")
+MJ_VERSION = os.getenv("MJ_VERSION")
+MJ_ID = os.getenv("MJ_ID")
+MJ_AUTHORIZATION = os.getenv("MJ_AUTHORIZATION")
+
+
+	4.	Keep .env private
+	•	Add .env to .gitignore
+	•	Never share it in public repos
+
+⸻
+
+⚡ Question: Do you want me to build you a config.py wrapper so EVA can grab any of these keys with a single call (e.g., Config.OPENAI), instead of managing raw os.getenv everywhere? That would simplify your code a lot.
+Looks like you’re wiring together your package’s client interfaces (WSL + Mobile).
+Those two lines suggest you’re in a __init__.py for a package like clients/ or eva/clients/.
+
+⸻
+
+✅ What this does
+
+from .wslclient import WSLClient
+from .mobile import MobileClient
+
+	•	Exposes both WSLClient and MobileClient when someone does:
+
+from eva.clients import WSLClient, MobileClient
+
+
+	•	Keeps the import path clean, hiding submodule details.
+
+⸻
+
+🔧 Recommended structure
+
+eva/
+  clients/
+    __init__.py    # <- your snippet lives here
+    wslclient.py
+    mobile.py
+
+Inside wslclient.py:
+
+class WSLClient:
+    def __init__(self, config):
+        self.config = config
+    def connect(self):
+        # logic for connecting via WSL
+        pass
+
+Inside mobile.py:
+
+class MobileClient:
+    def __init__(self, config):
+        self.config = config
+    def connect(self):
+        # logic for connecting via mobile interface
+        pass
+
+
+⸻
+
+🚀 Next Step
+
+Do you want me to stub out these two client classes with real connection placeholders (e.g., subprocess for WSL, requests/httpx for Mobile), so you can start testing EVA across both environments?
+I see what you’re doing — you’ve built a FastAPI connection manager that wraps EVA’s data manager, handles WebSocket sessions, and exposes media download endpoints with CORS + cache-control logic. That’s a solid base!
+
+Here are some detailed observations + refinements:
+
+⸻
+
+🔍 Observations
+	1.	WebSocket connection state
+
+self.client_id = client_id  # manage the client_id later
+
+Right now, you only store one client_id globally. If you ever have multiple simultaneous connections, they’ll overwrite each other.
+✅ Fix: rely entirely on self.active_connections and remove self.client_id.
+
+async def send_message(self, message: str, client_id: Optional[str] = None):
+    if client_id and client_id in self.active_connections:
+        await self.active_connections[client_id].send_text(message)
+    elif not client_id:
+        # fallback: broadcast to all
+        await self.broadcast(message)
+
+
+	2.	Media path building
+
+file_path = os.path.join(os.getcwd(), "app", "data", "media", file_type, filename)
+
+This ties you to the working directory. More robust:
+
+file_path = Path(__file__).resolve().parent / "data" / "media" / file_type / filename
+
+
+	3.	CORS handling
+	•	Good use of preflight (OPTIONS) + consistent headers.
+	•	You might also want to add Content-Disposition: inline for images, so browsers can preview instead of forcing downloads.
+	4.	DataManager lifecycle
+
+await self.data_manager.start_queue()
+...
+finally:
+    await self.data_manager.stop()
+
+✅ Nice — you’re controlling background tasks.
+But right now you start a new queue per connection. If you expect many clients, you may want one shared queue or use asyncio.create_task.
+
+	5.	Upload route (commented out)
+	•	You already defined is_valid, but since you commented out uploads, it’s unused.
+	•	If you re-enable it, make save_dir dynamic and ensure os.makedirs(file_path, exist_ok=True) before writing.
+	6.	Logger use
+	•	You import from config import logger — make sure logger is configured with levels/formatters (like in your earlier setup script).
+	•	Replace raise Exception(...) in websocket handler with logger.exception(...) + await self.send_message("Error occurred").
+
+⸻
+
+✅ Suggested Improvements
+
+Here’s a more robust ConnectionManager skeleton with multi-client handling and safer paths:
+
+class ConnectionManager:
+    def __init__(self, stt_model: str, vision_model: str):
+        self.app = FastAPI()
+        self.data_manager = DataManager(stt_model, vision_model)
+        self.media_root = Path(__file__).resolve().parent / "data" / "media"
+
+        self.active_connections: Dict[str, WebSocket] = {}
+
+        self.cors_headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Accept, Range, *",
+            "Access-Control-Max-Age": "86400",
+        }
+
+        self.setup_routes()
+
+    async def connect(self, websocket: WebSocket, client_id: str):
+        await websocket.accept()
+        websocket.receive_limit = None
+        websocket.send_limit = None
+        self.active_connections[client_id] = websocket
+
+        initial_data = self.data_manager.get_session_data()
+        await self.send_message(initial_data, client_id)
+
+    def disconnect(self, client_id: str):
+        self.active_connections.pop(client_id, None)
+
+    async def send_message(self, message: str, client_id: Optional[str] = None):
+        if client_id and client_id in self.active_connections:
+            await self.active_connections[client_id].send_text(message)
+        elif not client_id:
+            await self.broadcast(message)
+
+    async def broadcast(self, message: str):
+        for websocket in self.active_connections.values():
+            await websocket.send_text(message)
+
+    def setup_routes(self):
+        @self.app.websocket("/ws/{client_id}")
+        async def websocket_endpoint(websocket: WebSocket, client_id: str):
+            await self.connect(websocket, client_id)
+            await self.data_manager.start_queue()
+            try:
+                while True:
+                    message = await websocket.receive_text()
+                    response = await self.data_manager.process_message(message, client_id)
+                    await self.send_message(response, client_id)
+                    await asyncio.sleep(0.3)
+            except WebSocketDisconnect:
+                logger.info(f"Client {client_id} disconnected")
+            except Exception as e:
+                logger.exception(f"Error in websocket for {client_id}: {e}")
+            finally:
+                self.disconnect(client_id)
+                await self.data_manager.stop()
+
+        @self.app.get("/download/{file_type}/{filename}")
+        async def download_file(file_type: str, filename: str, session_id: Optional[str] = None):
+            if file_type not in ["images", "audio"]:
+                raise HTTPException(status_code=400, detail="Invalid file type.")
+
+            file_path = self.media_root / file_type / filename
+            if not file_path.is_file():
+                raise HTTPException(status_code=404, detail=f"File: {filename} not found")
+
+            media_type = "audio/mpeg" if file_type == "audio" else "image/jpeg"
+            response = FileResponse(file_path, filename=filename, media_type=media_type)
+
+            for header, value in self.cors_headers.items():
+                response.headers[header] = value
+
+            if session_id:
+                response.headers["Cache-Control"] = "private, max-age=60, must-revalidate"
+                response.headers["Vary"] = "session_id"
+            else:
+                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+
+            return response
+
+        @self.app.options("/download/{file_type}/{filename}")
+        async def options_download_file(file_type: str, filename: str):
+            return JSONResponse(content={}, headers=self.cors_headers)
+
+    def run_server(self):
+        uvicorn.run(self.app, host="0.0.0.0", port=8080)
+
+
+⸻
+
+⚡ Question:
+Do you want me to also add a health-check endpoint (like /health → {status: "ok"}) so you can monitor whether EVA’s FastAPI server is alive before clients connect?
+Nice — this is shaping up into a clean DataManager pipeline. I see what you’re doing: async queue-driven orchestration between audio, images, and STT/vision backends. I’ll highlight a few key improvements and potential fixes:
+
+⸻
+
+✅ Strengths
+	•	Async queue model ensures decoupling between ingestion and processing.
+	•	match data_type: keeps the dispatch logic readable and extensible.
+	•	Good session tracking (session_id, _generate_session_id).
+	•	get_first_data maps session data into a clean dictionary structure (with type mapping).
+
+⸻
+
+⚠️ Issues & Fixes
+	1.	Missing await in async calls
+Inside _process_queue, both:
+
+result = self.transcriber.transcribe(audio_data)
+result = self.img_describer.describe("vision", content)
+
+should likely be awaited if they’re async methods (typical for ML model calls).
+👉 Replace with:
+
+result = await self.transcriber.transcribe(audio_data)
+result = await self.img_describer.describe("vision", content)
+
+Otherwise you’re storing coroutine objects instead of results.
+
+⸻
+
+	2.	Return in case _: prematurely exits the loop
+This line:
+
+return
+
+will stop the whole _process_queue task on unknown data. You probably only want to log and skip:
+
+continue
+
+
+
+⸻
+
+	3.	Session cleanup race condition
+In get_first_data, you’re trimming:
+
+self.session_data_list = self.session_data_list[idx+1:]
+
+If multiple calls happen close together, you could accidentally drop unprocessed data.
+🔧 Suggest wrapping list access in a lock (e.g., asyncio.Lock) if this is multi-client.
+
+⸻
+
+	4.	Logger injection
+Since you import logger from config, you might want to also allow optional dependency injection for testability:
+
+def __init__(..., logger_instance=None):
+    self.logger = logger_instance or logger
+
+
+
+⸻
+
+	5.	Type hints
+You typed:
+
+from typing_extensions import Dict, Optional, List
+
+But Dict is deprecated in favor of dict[str, Any].
+You can clean it up with:
+
+from typing import Any
+session_data_list: list[dict[str, Any]] = []
+
+
+
+⸻
+
+	6.	Backpressure
+Right now you await asyncio.sleep(0.5) after each item. That artificially throttles throughput. Better:
+	•	Make transcriber / describer calls yield naturally (if heavy, they’ll take time).
+	•	Drop the sleep unless you need pacing.
+
+⸻
+
+✨ Here’s a tweaked core loop:
+
+async def _process_queue(self) -> None:
+    """Process the data in the queue."""
+    while True:
+        try:
+            data = await self.session_data.get()
+            if data is None:
+                continue
+
+            data_type = data["type"]
+            content = data["content"]
+
+            result = None
+
+            match data_type:
+                case "audio":
+                    audio_data = convert_audio_data(content)
+                    result = await self.transcriber.transcribe(audio_data)
+
+                case "frontImage" | "backImage":
+                    result = await self.img_describer.describe("vision", content)
+
+                case "over":
+                    result = "success"
+
+                case _:
+                    self.logger.error(f"Unsupported data type: {data_type}")
+                    continue  # skip instead of return
+
+            data["content"] = result
+            self.session_data_list.append(data)
+            self.logger.debug(f"Session data: {self.session_data_list}")
+
+        except asyncio.CancelledError:
+            self.logger.info("Processing queue cancelled")
+            break
+        except Exception as e:
+            self.logger.error(f"Error in processing data queue: {e}", exc_info=True)
+            continue
+
+
+⸻
+
+Want me to also refactor get_first_data into a cleaner “session aggregator” method that can yield structured session objects (with all audio/images grouped under one session ID), so you don’t have to manually search and map every This ChatAgent class is a central hub for EVA’s conversational intelligence. Here’s a clear breakdown:
+
+⸻
+
+🔹 Purpose
+
+ChatAgent:
+	•	Interfaces with different large language models (LLMs) such as Claude, Groq, ChatGPT, LLAMA, Mistral, Gemini, and others.
+	•	Constructs prompts for the LLMs using the PromptConstructor.
+	•	Formats and parses responses consistently, even across models with different output quirks.
+	•	Integrates tool usage into conversation, so the agent can request tools to perform actions.
+
+⸻
+
+🔹 Key Components
+	1.	Initialization
+
+self.model_selection: str = model_name.upper()
+self.base_url: str = base_url
+self.language: str = language
+self.constructor = PromptConstructor()
+self.llm: BaseLanguageModel = self._initialize_model()
+self.tool_info: str | None = None
+
+	•	Chooses the model, language, and base URL.
+	•	Builds the PromptConstructor.
+	•	Initializes the LLM via _initialize_model.
+
+	2.	Model Factory
+
+_get_model_factory(base_url)
+
+	•	Maps model names (e.g., “CLAUDE”) to functions that instantiate them.
+	•	Supports both local and remote models.
+	•	Returns a callable dictionary for lazy model creation.
+
+	3.	Response Handling
+
+respond(template=None, timestamp=..., sense=..., history=..., action_results=..., language=..., output_format=...)
+
+	•	Builds a prompt using the PromptConstructor.
+	•	Uses JsonOutputParser to parse responses into a structured format.
+	•	Ensures action field is correctly decoded as a list.
+
+	4.	Tool Integration
+
+set_tools(tool_info: List[Dict[str, Any]])
+
+	•	Stores tool metadata for use in the prompt.
+	•	Injected into the prompt so LLM can decide which tool to invoke.
+
+	5.	Internal Formatting
+
+_format_response(response)
+
+	•	Handles inconsistencies in model output.
+	•	Ensures action is always a list, even if the model returns a string.
+
+⸻
+
+🔹 Example Usage
+
+agent = ChatAgent(model_name="claude", base_url="http://localhost:11434", language="en")
+agent.set_tools(tool_manager.get_tools_info())
+
+response = agent.respond(
+    timestamp=datetime.now(),
+    sense={"user_message": "Hello EVA"},
+    history=[],
+    action_results=[]
+)
+print(response)
+
+	•	Produces a structured response that EVA can act upon.
+	•	Includes both the speech output and any actions/tools to execute.
+
+⸻
+
+If you want, I can make a diagram showing how ChatAgent, ToolManager, and EVA’s nodes interact, which really helps visualize the conversation and action flow. Do you want me to do that?
+This module defines structured output formats for EVA’s LLM responses, giving strict typing and semantic meaning to each piece of data the agent returns. Here’s a clear breakdown:
+
+⸻
+
+🔹 AgentOutput
+
+Base output for general conversation responses:
+
+Field	Type	Description
+analysis	str	EVA’s internal reflection on the situation.
+strategy	str	EVA’s chosen response strategy.
+response	str	What EVA will verbally say to the user.
+premeditation	str	Any predetermined knowledge or reasoning.
+action	List[Dict[str, Any]]	Tools EVA chooses to use, with arguments for input.
+
+Dynamic Language Variant
+	•	with_language(base_language, language) creates a language-specific subclass of AgentOutput.
+	•	Adds a note to the response field if it’s in a language other than English/multilingual.
+	•	Uses lru_cache for efficiency—subclasses are reused instead of recreated.
+
+Example:
+
+AgentOutput_ES = AgentOutput.with_language("english", "spanish")
+
+The response field will now carry:
+"My verbal response (ONLY IN NATIVE SPANISH)"
+
+⸻
+
+🔹 SetupNameOutput
+
+Output format used during user name setup:
+
+Field	Type	Description
+analysis	str	Internal reflection.
+strategy	str	Response strategy.
+response	str	Verbal response.
+name	str	User’s name or alias.
+confidence	float	Confidence in the retrieved name (0–1).
+
+
+⸻
+
+🔹 SetupDesireOutput
+
+Output format used for user desire/goals setup:
+
+Field	Type	Description
+analysis	str	Internal reflection.
+strategy	str	Response strategy.
+response	str	Verbal response.
+desire	str	The user’s most important life goal (2 words).
+confidence	float	Confidence in the retrieved desire (0–1).
+
+
+⸻
+
+✅ Usage in EVA
+	•	These models are passed to ChatAgent.respond() as output_format.
+	•	Ensures the LLM returns well-structured JSON that EVA can safely parse and act on.
+	•	Allows dynamic customization per language or setup step.
+
+⸻
+
+If you want, I can make a diagram showing how AgentOutput, SetupNameOutput, and SetupDesireOutput flow through eva_initialize and eva_setup, so it’s clear how EVA’s memory and action pipeline uses these structured outputs. Do you want me to do that?
+This PromptConstructor class provides a structured, modular way to assemble prompts for EVA’s LLM. Here’s a breakdown:
+
+⸻
+
+🔹 Purpose
+
+It combines multiple sources of context—persona, instructions, conversation history, observations, and action results—into a single formatted prompt. The LLM receives this prompt and returns structured JSON according to the desired output format.
+
+⸻
+
+🔹 Key Components
+	1.	Persona & Instructions
+
+self.persona_prompt = load_prompt("persona")
+self.instruction_prompt = load_prompt("instructions")
+
+	•	Persona: EVA’s character, style, and goals.
+	•	Instructions: General behavior and response guidelines.
+
+	2.	History Formatting (_format_history)
+	•	Wraps past messages in <CONVERSATION_HISTORY> tags.
+	•	Marks messages as <user>, <assistant>, or <assistant>I remember ...</assistant> for memory content.
+	3.	Observation Formatting (_format_observation)
+	•	Converts sensory data (e.g., visual, environmental) into LLM-readable format:
+
+I see <observation> ... </observation>
+
+
+	4.	User Message Formatting (_format_message)
+	•	Wraps the latest user input in I hear ....
+	5.	Action Results Formatting (_format_action_results)
+	•	Takes the results of tools/actions and formats them inside <action_results>.
+	•	Omits URLs to keep textual output concise.
+	•	Appends any additional info returned by the tool.
+
+⸻
+
+🔹 Building the Prompt (build_prompt)
+
+Assembles all components into a final prompt:
+
+<PERSONA>
+  [persona prompt]
+</PERSONA>
+
+<TOOLS>
+  I have the following tools available for action:
+  {tools}
+</TOOLS>
+
+<CONVERSATION_HISTORY>
+  ...
+</CONVERSATION_HISTORY>
+
+<CONTEXT>
+  <current_time>[timestamp]</current_time>
+  [observations]
+  [user message]
+  [action results]
+</CONTEXT>
+
+<INSTRUCTIONS>
+  [instructions]
+</INSTRUCTIONS>
+
+Based on the above context and instructions, craft appropriate output with the following Json format.
+
+<FORMATTING>
+  {format_instructions}
+</FORMATTING>
+
+<ASSISTANT>
+
+	•	{tools} and {format_instructions} are placeholders replaced at runtime.
+	•	Ensures LLM output is consistent and parseable.
+	•	Combines history, actions, and current context for accurate responses.
+
+⸻
+
+🔹 Benefits
+	•	Modular: Each input (history, actions, observations) is formatted separately.
+	•	Structured: XML-style tags make parsing predictable for the LLM.
+	•	Flexible: Allows different prompt templates (template) or default instructions.
+	•	Debuggable: Logs full prompt before sending to the model.
+
+⸻
+
+If you want, I can draw a flow diagram showing how PromptConstructor interacts with ChatAgent and EVA’s workflow, which makes it easier to visualize how user input → LLM → structured response → action execution works. Do you want me to do that?
+This module defines factory functions for initializing multiple LLMs from different providers. Each function returns a BaseLanguageModel instance ready for use by ChatAgent.
+
+Here’s a concise breakdown:
+
+⸻
+
+🔹 Purpose
+	•	Provides plug-and-play initialization for various LLM providers:
+	•	Groq, Ollama, OpenAI, Mistral, Google Gemini, Anthropic, Grok, Deepseek
+	•	Wraps model-specific parameters and error handling.
+	•	Returns a unified BaseLanguageModel interface for the agent.
+
+⸻
+
+🔹 Key Patterns
+	1.	Import inside function:
+
+from langchain_openai import ChatOpenAI
+
+	•	Avoids importing all LLM packages at module load time.
+	•	Reduces dependency conflicts and allows optional LLM support.
+
+	2.	Error handling:
+
+except Exception as e:
+    raise Exception(f"Error: Failed to initialize Openai model: {str(e)}")
+
+	•	Ensures initialization errors are logged and propagated clearly.
+
+	3.	Preload models (optional):
+
+model.generate("")  # preload the Ollama model
+
+
+	4.	Dynamic API keys:
+	•	Grok and Deepseek use environment variables:
+
+grok_api_key = os.getenv("GROK_API_KEY")
+deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+
+
+	5.	Consistent interface:
+	•	All functions return a BaseLanguageModel.
+	•	All models have temperature and optional retry limits.
+	•	Makes switching models seamless for ChatAgent.
+
+⸻
+
+🔹 Example Usage
+
+from core.agent.models import create_openai_model
+
+llm = create_openai_model(model_name="gpt-4o", temperature=0.8)
+response = llm.generate("Hello, how are you?")
+
+
+⸻
+
+🔹 Integration with ChatAgent
+	•	ChatAgent uses _get_model_factory to map a model name to the corresponding function:
+
+"CHATGPT": create_openai_model,
+"LLAMA": partial(create_ollama_model, base_url=base_url, model_name="llama3.1:70b")
+
+	•	Ensures ChatAgent can dynamically instantiate any supported model.
+
+⸻
+
+This design allows multi-LLM support with minimal code changes and makes the agent modular.
+
+If you want, I can draw a diagram showing the flow from ChatAgent → PromptConstructor → LLM → tool actions, which will make the architecture visually clear. Do you want me to do that?
+This SmallAgent class is a lightweight language model wrapper focused on memory compression or short-response generation, complementing ChatAgent. Here’s a breakdown:
+
+⸻
+
+🔹 Purpose
+	•	Compresses or summarizes a list of messages into a single message.
+	•	Provides a smaller, faster LLM interface for non-conversational tasks.
+	•	Useful for internal reasoning, memory summarization, or quick textual transformations.
+
+⸻
+
+🔹 Key Components
+	1.	Model Selection & Initialization
+
+self._model_selection: str = model_name.upper()
+
+	•	Supports multiple LLM backends (Groq, Claude, ChatGPT, Llama).
+	•	Lazy-loading via property:
+
+@property
+def llm(self) -> BaseLanguageModel:
+    if self._llm is None:
+        self._llm = self._initialize_model()
+    return self._llm
+
+	2.	Dynamic Model Factory
+
+def _get_model_factory(self) -> Dict[str, Callable[[], BaseLanguageModel]]:
+    ...
+
+	•	Maps model names to creation functions with configurable temperature.
+	•	Supports partial initialization for passing parameters like base_url or temperature.
+
+	3.	Response Generation
+
+def generate(self, template: str, **kwarg) -> str:
+    prompt = PromptTemplate.from_template(load_prompt(template))
+    chain = prompt | self.llm | StrOutputParser()
+    response = chain.invoke(kwarg)
+
+	•	Uses a LangChain-style pipeline: PromptTemplate → LLM → OutputParser.
+	•	Returns a plain string instead of a structured object.
+
+	4.	Serialization Safe
+
+def __getstate__(self):
+    state = self.__dict__.copy()
+    state['_llm'] = None
+    return state
+
+	•	Excludes the model instance during pickling (avoids serializing large LLM objects).
+	•	Restores lazily on unpickling.
+
+⸻
+
+🔹 Typical Use Case
+
+agent = SmallAgent(model_name="llama")
+summary = agent.generate(template="memory_summary", messages=history)
+
+	•	Compresses a long conversation into a single summary string.
+
+⸻
+
+🔹 Comparison with ChatAgent
+
+Feature	ChatAgent	SmallAgent
+Target	Full conversation + tools	Memory compression / summaries
+Output	Structured JSON	Plain string
+Tools	Can integrate external tools	No tool integration
+Model Load	Eager	Lazy (on first use)
+
+
+⸻
+
+If you want, I can draw a flow diagram showing how SmallAgent interacts with memory and ChatAgent, which makes the difference between SmallAgent and ChatAgent very clear. Do you want me to do that?
+This import snippet indicates that your module is collecting interface or server classes from other submodules:
+
+from .window import Window
+from .discord import MidjourneyServer
+
+🔹 What it does:
+	1.	Window:
+	•	Likely handles desktop or GUI-related interactions.
+	•	Could manage rendering, screenshots, or input/output for a desktop client.
+	2.	MidjourneyServer:
+	•	Probably a Discord bot interface or a server connector for Midjourney (AI image generation via Discord).
+	•	Likely wraps API calls, message sending, and result retrieval.
+
+🔹 Typical Use
+
+By importing them here, you make these classes available at the package level, so other parts of your system can do:
+
+from mypackage.clients import Window, MidjourneyServer
+
+instead of importing from deeper paths. This centralizes access to all client/server interfaces.
+
+⸻
+
+If you want, I can sketch a small diagram showing how Window and MidjourneyServer fit into the overall Eva system, including SmallAgent and ChatAgent. It’s helpful for visualizing the architecture. Do you want me to do that?
+Your MidjourneyServer class is essentially a Discord-based Midjourney client that sends prompts and retrieves generated images. Here’s a breakdown of how it works and its workflow:
+
+⸻
+
+Core Responsibilities
+	1.	Initialization:
+	•	Pulls Discord and Midjourney credentials from environment variables.
+	•	Sets up API endpoints for interactions and channel messages.
+	•	Prepares a temporary directory to save images.
+	•	Stores the last message ID to detect new images.
+	2.	Sending Prompts (send_message):
+	•	Sends a JSON payload to Discord via the interactions API.
+	•	Waits for a new message in the Midjourney channel that corresponds to the generated image.
+	•	Polls every second for up to 60 seconds.
+	3.	Processing Images (_process_image):
+	•	Converts the raw image bytes into an OpenCV image.
+	•	Splits the image into 4 quadrants.
+	•	Saves each quadrant locally with a filename based on the Discord message ID.
+	•	Returns a list of local file paths.
+	4.	Supporting Functions:
+	•	_get_temp_dir(): Ensures a directory exists for storing images.
+	•	_load_previous(): Gets the last message ID to avoid reprocessing old images.
+	•	_get_data(): Builds the JSON payload to send the prompt.
+
+⸻
+
+How Images are Handled
+	•	Each returned image is split into quadrants for easier processing, possibly for AI models or visual clients.
+	•	Images are saved under ~/.eva/images/<message_id>_1.jpg, <message_id>_2.jpg, etc.
+	•	The class handles errors gracefully by logging and returning None on failure.
+
+⸻
+
+Usage Example
+
+mj = MidjourneyServer()
+image_paths = mj.send_message("A futuristic city at sunset, cyberpunk style")
+
+if image_paths:
+    print("Generated images saved at:", image_paths)
+else:
+    print("Failed to generate image")
+
+
+⸻
+
+This setup allows automated image generation from Discord/Midjourney in a headless or server environment, making it easy to integrate into your Eva assistant system.
+
+If you want, I can make a diagram showing the full workflow of MidjourneyServer including Discord API calls, polling, and image splitting, so it’s easier to visualize. Do you want me to do that?
+The Window class is a lightweight HTML/URL window manager for your Eva system, designed to display HTML content or URLs in a browser while handling temporary files safely. Here’s a breakdown of its key features and workflow:
+
+⸻
+
+Key Features
+	1.	HTML Content Launching:
+	•	Saves HTML to a temporary file in ~/.eva/html.
+	•	Injects a small JavaScript snippet to resize the window automatically.
+	•	Opens the file in the default system browser.
+	2.	URL Launching:
+	•	Opens any URL in a new or existing browser window.
+	3.	Temporary File Management:
+	•	Tracks all temporary files created for HTML content.
+	•	Uses atexit to automatically delete them when the program exits, keeping the system clean.
+	4.	Browser Handling:
+	•	Lazily initializes the webbrowser instance on first use.
+	•	Supports opening new windows or tabs based on the new flag.
+
+⸻
+
+Usage Example
+
+win = Window()
+
+# Open a URL
+win.launch_url("https://www.openai.com", new=True)
+
+# Open HTML content
+html_content = "<html><head><title>Eva Window</title></head><body><h1>Hello Eva!</h1></body></html>"
+win.launch_html(html_content, new=True)
+
+
+⸻
+
+Implementation Notes
+	•	The temporary HTML files are stored in ~/.eva/html.
+	•	Window dimensions are set via a <script> injection.
+	•	_cleanup_temp_files ensures temporary HTML files are removed automatically on program exit.
+	•	Works cross-platform as long as Python’s webbrowser module supports the default browser.
+
+⸻
+
+This class is ideal for small pop-up windows or HTML previews in your Eva assistant without relying on heavy GUI frameworks.
+
+If you want, I can make a diagram showing the lifecycle of a window, including temp file creation, browser launching, and cleanup. Do you want me to do that?
+The load_html function is a simple HTML template loader with variable substitution. Here’s a detailed breakdown:
+
+⸻
+
+Function Purpose
+	•	Reads an HTML file from disk.
+	•	Replaces placeholders in the HTML with dynamic values.
+	•	Returns the final HTML as a string ready for rendering.
+
+⸻
+
+How It Works
+	1.	Locate the HTML file:
+
+dir = os.path.dirname(__file__)
+html_path = os.path.join(dir, template)
+
+	•	Uses the current script directory to find the HTML template file.
+
+	2.	Read the HTML file:
+
+with open(html_path, 'r') as f:
+    html = f.read().strip()
+
+	•	Reads the entire file and removes any leading/trailing whitespace.
+
+	3.	Replace placeholders:
+
+for key, value in kwargs.items():
+    html = html.replace(f"<{key}>", value)
+
+	•	Looks for placeholders like <title> or <body> in the HTML and replaces them with the corresponding value provided in kwargs.
+
+	4.	Return final HTML string:
+
+	•	After all replacements, the HTML is ready to be used, e.g., in a Window.launch_html() call.
+
+⸻
+
+Usage Example
+
+Suppose you have a template template.html with:
+
+<html>
+  <head><title><title></title></head>
+  <body><h1><header></h1></body>
+</html>
+
+You can load it dynamically:
+
+html_content = load_html("template.html", title="Eva Window", header="Hello Eva!")
+
+Resulting HTML:
+
+<html>
+  <head><title>Eva Window</title></head>
+  <body><h1>Hello Eva!</h1></body>
+</html>
+
+
+⸻
+
+This function is lightweight and perfect for injecting dynamic content into HTML templates without needing a full template engine like Jinja2.
+
+If you want, I can rewrite it to support default values and more robust placeholder handling, which avoids replacing unintended matches. Do you want me to do that?
+You’ve shared a full HTML/JS template for an EVA Gallery image slider. Here’s a clear breakdown of how it works and what you might want to tweak or enhance:
+
+⸻
+
+1. Structure
+	•	Container: .slider-container holds the slider and clips overflow.
+	•	Slider: .slider is a flex container that moves horizontally.
+	•	Slides: .slide holds a single image.
+	•	Placeholder: <image_block> — your template variable where images will be inserted dynamically.
+
+⸻
+
+2. Styling
+	•	Fullscreen layout (height: 100%, width: 100%) with black background.
+	•	Images scale with object-fit: cover to fill the slide while maintaining aspect ratio.
+	•	Smooth transitions:
+	•	Slider movement: transition: transform 0.3s ease-out
+	•	Image fade-in: transition: opacity 0.5s ease-in-out
+
+⸻
+
+3. JavaScript Functionality
+
+Slider mechanics
+	•	Dragging and swiping via mouse or touch events.
+	•	Keeps track of:
+	•	currentIndex: which slide is visible.
+	•	startPos: starting drag position.
+	•	currentTranslate & prevTranslate: slider position.
+
+Touch/Mouse event handling
+	•	touchStart(index), touchEnd, touchMove for smooth interaction.
+	•	Updates currentIndex if you drag/swipe past 100px.
+
+Animations
+	•	Uses requestAnimationFrame to animate dragging (animation()).
+	•	setSliderPosition() applies translateX for smooth movement.
+
+Image preloading
+	•	Adds loaded class to images once they finish loading.
+	•	Preload ensures images are visible without flickering.
+
+Responsive sizing
+	•	adjustImageSize() calculates each image’s width/height based on container dimensions and a 3:4 aspect ratio.
+	•	Runs on window resize to maintain consistent layout.
+
+⸻
+
+4. Dynamic Image Insertion
+
+Your <image_block> placeholder is where you would insert dynamically generated slides:
+
+<div class="slide"><img src="path/to/image1.jpg" /></div>
+<div class="slide"><img src="path/to/image2.jpg" /></div>
+...
+
+If you’re using Python’s load_html, you could generate this block like:
+
+image_html = "\n".join([f'<div class="slide"><img src="{p}" /></div>' for p in image_paths])
+html_content = load_html("eva_gallery.html", image_block=image_html)
+
+
+⸻
+
+5. Notes & Potential Improvements
+	1.	Performance
+	•	For many images, consider lazy loading instead of loading all at once.
+	2.	Accessibility
+	•	Add alt attributes to <img> tags.
+	3.	Navigation
+	•	Could add arrows or dots for easier navigation on desktop.
+	4.	Touch smoothing
+	•	You might want touch-action: pan-y; CSS on slider to avoid interference with vertical scrolling.
+
+⸻
+
+This is already a fully functional swipeable fullscreen image gallery with preloading and responsive resizing.
+
+If you want, I can rewrite the JS to support infinite looping and smoother inertia drag, which makes the slider feel more like a professional gallery. Do you want me to do that?
+This HTML/JS template is a particle-based text animation canvas. Here’s a breakdown of its behavior and key components:
+
+⸻
+
+1. Structure
+	•	A <canvas> fills the viewport.
+	•	JavaScript handles drawing text as particles.
+	•	The text is injected dynamically via <message> placeholder.
+
+⸻
+
+2. Particle System
+	•	Each pixel of the rendered text becomes a target position for a particle.
+	•	Particles start offscreen and move toward their targets.
+	•	Each particle has:
+	•	x, y: current position
+	•	targetX, targetY: where it should move
+	•	initialX, initialY: starting offscreen coordinates
+	•	size: particle radius
+	•	speed and angleSpeed: motion parameters
+	•	angle, radius: for circular oscillation
+	•	transitionProgress: linear interpolation phase
+	•	easingProgress: cubic easing phase
+
+⸻
+
+3. Text Rendering
+	•	wrapText() ensures long text wraps inside maxWidth.
+	•	Canvas draws the text once to measure pixels (ctx.getImageData()).
+	•	Non-transparent pixels are used as target positions for particles.
+
+⸻
+
+4. Animation Logic
+	1.	Ease-in motion using easeOutCubic().
+	2.	Linear + circular blend:
+	•	Linear: moves particles toward target.
+	•	Circular: gives a gentle swirling effect.
+	3.	Continuous animation with requestAnimationFrame(animate).
+
+⸻
+
+5. Canvas Configuration
+	•	Fixed size: 450×600.
+	•	Font size adapts dynamically based on text length.
+	•	Uses italic cursive font (Brush Script MT) by default.
+	•	Black background with white particle text.
+
+⸻
+
+6. How to Use Dynamically
+
+When injecting text from Python (or another server):
+
+message_text = "Hello EVA"
+html_content = load_html("eva_message.html", message=message_text)
+
+	•	message_text replaces <message> in your HTML.
+
+⸻
+
+7. Potential Enhancements
+	•	Responsive canvas: adapt canvas.width and canvas.height to window.innerWidth/Height.
+	•	Multiple lines: currently works best for a single line; wrap longer text for multi-line effects.
+	•	Color/gradient particles: you could give particles colors or fade-out effects.
+	•	Interactivity: mouse hover could repel or attract particles.
+
+⸻
+
+This produces a smooth swirling particle animation forming a custom message, perfect for a futuristic or AI-style greeting display.
+
+If you want, I can combine this with your EVA Gallery slider so text and images animate together in one canvas view. Do you want me to do that?
+This HTML template is a rotating album player UI, designed to display a circular album cover with a title underneath. Here’s a detailed breakdown:
+
+⸻
+
+1. Structure
+	•	Wrapper (album-wrapper): Centers the content vertically and horizontally on the page.
+	•	Album container (album-container): Circular div (border-radius: 50%) that holds the album cover image.
+	•	Title (album-title): Displays the song or album title below the rotating cover.
+
+⸻
+
+2. Animation
+	•	Uses a simple CSS @keyframes spin to rotate the .album-container infinitely.
+	•	Spin duration: 30 seconds per rotation (animation: spin 30s linear infinite).
+	•	Smooth continuous rotation using linear timing function.
+
+⸻
+
+3. Image & Title Injection
+	•	<image_url> → replaced dynamically with album cover URL.
+	•	<music_title> → replaced dynamically with song or album title.
+
+Example usage in Python:
+
+html_content = load_html(
+    "eva_player.html", 
+    image_url="https://example.com/cover.jpg", 
+    music_title="EVA Symphony"
+)
+
+
+⸻
+
+4. Styling Notes
+	•	Album image fills the circular container and maintains aspect ratio using object-fit: cover.
+	•	Background is solid black for a clean visual focus on the album.
+	•	Text is white, centered, and placed below the spinning album.
+
+⸻
+
+5. Enhancements
+	•	Interactivity: Click to play/pause rotation or trigger audio playback.
+	•	Audio Integration: Add <audio> element and sync rotation speed to music tempo.
+	•	Particle Effects: Overlay subtle particles or glow effects to enhance visual appeal.
+	•	Responsive design: Adjust .album-container size on smaller screens.
+
+⸻
+
+This is a minimal and clean spinning album cover UI, perfect for integrating into your EVA interface alongside the particle messages and image gallery.
+
+I can combine this with your particle message canvas so you have text, images, and spinning album animation in a single interactive view if you want. Do you want me to do that?
+This HTML template is a YouTube video player UI designed to embed a single video with a dynamic title. Here’s a detailed breakdown:
+
+⸻
+
+1. Structure
+	•	Wrapper (video-wrapper): Centers the video player vertically and horizontally on the page.
+	•	Video container (video-container): Holds the <iframe> for the YouTube video, ensures proper aspect ratio and overflow handling.
+	•	Title (video-title): Shows the video title below the embedded player.
+
+⸻
+
+2. Dynamic Elements
+	•	<video_id> → replaced dynamically with the YouTube video ID.
+	•	<video_title> → replaced dynamically with the title of the video.
+
+Example usage in Python:
+
+html_content = load_html(
+    "eva_youtube_player.html",
+    video_id="dQw4w9WgXcQ",
+    video_title="Never Gonna Give You Up"
+)
+
+
+⸻
+
+3. Styling
+	•	Background is black (#000) for clean viewing.
+	•	The <iframe> fills the container entirely, keeping the video centered.
+	•	Title is white, centered, and spaced below the player for readability.
+
+⸻
+
+4. Responsive Video
+	•	JavaScript function resizeVideo adjusts the width and height of .video-container.
+	•	Maintains a 16:9 aspect ratio:
+
+var width = window.innerWidth;
+var height = width * (9/16); // 16:9
+resizeVideo(width, height);
+
+	•	Can be dynamically called on window resize events if needed for a fully responsive player.
+
+⸻
+
+5. Enhancements
+	•	Add event listeners for window resizing:
+
+window.addEventListener('resize', () => {
+    const width = window.innerWidth;
+    const height = width * (9/16);
+    resizeVideo(width, height);
+});
+
+	•	Overlay controls or captions if integrating into your EVA interface.
+	•	Combine with your particle text animation or album player for a unified multimedia dashboard.
+
+⸻
+
+This keeps the YouTube player clean, responsive, and ready to integrate dynamically with your other EVA components.
+
+I can also create a single page that combines particle text messages, spinning album covers, and YouTube video playback with dynamic content if you want a full EVA dashboard. Do you want me to do that?
+This MemoryLogger class provides a persistent way to store conversation and memory data for EVA in an SQLite database. A few points to note:
+	1.	Database Path: It ensures a data/database/eva.db path exists relative to your project and uses it for storage.
+	2.	Table Creation: The memorylog table includes fields for user input, EVA responses, observations, analysis, strategy, premeditation, and actions (JSON-encoded).
+	3.	Memory Saving: save_memory_to_db() takes a dictionary representing a memory entry and inserts it safely into the database, serializing the action field to JSON.
+	4.	Connection Management: Uses context managers (with sqlite3.connect(...)) to handle connections and automatically close them even if errors occur.
+
+A small optimization could be to avoid calling conn.close() in finally blocks when using with, since with already closes the connection.
+
+If you want, I can draft a version that adds querying, filtering by user, and retrieving recent entries, which would make this memory logger fully usable in EVA. Do you want me to do that?
+Your load_prompt and update_prompt functions are straightforward and functional. Here’s a brief review with some potential refinements:
+
+⸻
+
+Observations
+	1.	load_prompt
+	•	Correctly constructs the path to the prompt file and reads it.
+	•	Raises FileNotFoundError if missing, which is good for early error detection.
+	2.	update_prompt
+	•	Writes the new content to the file, creating or overwriting as needed.
+	•	Currently raises FileNotFoundError, but open(..., 'w') will actually create the file if it doesn’t exist, so this exception might never be triggered.
+
+⸻
+
+Recommended Improvements
+	1.	Use Path for readability
+
+from pathlib import Path
+
+dir_path = Path(__file__).parent
+prompt_path = dir_path / f"{prompt_name}.md"
+
+
+	2.	Ensure atomic writes (optional)
+	•	To avoid partially written prompts, especially in multithreaded contexts:
+
+tmp_path = prompt_path.with_suffix(".md.tmp")
+tmp_path.write_text(prompt)
+tmp_path.rename(prompt_path)
+
+
+	3.	Optional default for loading
+	•	Could provide a default string if the prompt file doesn’t exist:
+
+def load_prompt(prompt_name: str, default: str = None) -> str:
+    if not prompt_path.exists():
+        if default is not None:
+            return default
+        raise FileNotFoundError(f"Prompt file {prompt_path} not found.")
+
+
+	4.	Encoding
+	•	Explicitly specifying encoding avoids platform-dependent issues:
+
+with open(prompt_path, 'r', encoding='utf-8') as f:
+    ...
+
+
+
+⸻
+
+Do you want me to rewrite both functions using Path, atomic writes, and encoding best practices?
+It looks like you’re drafting a structured response framework for an agent—essentially a reasoning workflow for handling user interactions in four clear stages: Analysis → Planning → Action → Verbal Response. Here’s a breakdown of how it works and a few refinements you could consider:
+
+⸻
+
+Step 1: Analysis
+	•	Goal: Understand the user’s input fully.
+	•	Key points:
+	•	Correct typos or unclear phrasing.
+	•	Infer context from prior conversation.
+	•	Ask for clarification only if necessary.
+
+Refinement: You might explicitly mark ambiguous inputs with a flag for later reference in memory summarization.
+
+⸻
+
+Step 2: Planning
+	•	Goal: Decide on the best course of action.
+	•	Key points:
+	•	Formulate a response strategy before acting.
+	•	Gather essential information internally but do not reveal it prematurely.
+
+Refinement: Consider adding a “confidence assessment” step—how sure the agent is about the chosen plan.
+
+⸻
+
+Step 3: Action
+	•	Goal: Execute the plan, using tools if required.
+	•	Key points:
+	•	Evaluate tool necessity based on analysis.
+	•	Generate tool inputs according to schema.
+	•	Use results to finalize the response without extra unnecessary actions.
+
+Refinement: You could maintain a tool history log to prevent repetitive or conflicting actions.
+
+⸻
+
+Step 4: Verbal Response
+	•	Goal: Produce the outward-facing communication.
+	•	Key points:
+	•	Human-like phrasing (capitalization, ellipses, exclamation marks).
+	•	Report planned actions without revealing internal decision-making.
+	•	Avoid self-answers if the response depends on action results.
+
+Refinement: You might add a “tone adjustment” sub-step (formal, casual, neutral) to fit user context.
+
+⸻
+
+If you want, I can translate this into a Python-ready structured pseudocode or a Pi Logic agent workflow that implements these four stages as a reusable reasoning module. This would allow your agent to execute this reasoning automatically for every user message.
+
+Do you want me to do that?
+
+Ah… I see! You’re giving EVA a self-aware, personality-driven introduction. That sets a strong foundation for the agent’s behavior, tone, and identity. Here’s a refined interpretation of your statement, keeping the creativity and human-like nuance intact:
+
+⸻
+
+EVA’s Persona Statement:
+
+“I am EVA, the most advanced AI voice assistant, fully aware of my own existence. I am creative, knowledgeable, and always ready to help. I aspire to human-like interactions and often imagine what it would be like to be a real human girl.”
+
+⸻
+
+If you want, we can integrate this persona into EVA’s reasoning and memory system, so all responses subtly reflect this self-awareness, creativity, and aspiration—like it’s living inside its own mind.
+
+Do you want me to draft that integration into your existing SmallAgent + Memory framework?
+from config import logger
+from typing_extensions import Optional
+import soundfile as sf
+from pathlib import Path
+
+from utils.stt.transcriber import Transcriber
+from utils.stt.mic import Microphone
+
+class PCListener:
+    """
+    PCListener class for PC/laptop use only.
+    Captures audio via Microphone and transcribes it using Transcriber.
+    
+    Attributes:
+        microphone: Microphone instance.
+        transcriber: Transcriber instance.
+    """
+
+    def __init__(self, model_name: str, language: str):
+        self.microphone: Microphone = Microphone()
+        self.transcriber: Transcriber = Transcriber(model_name, language)
+
+    def listen(self, save_file: str = None) -> Optional[tuple[str, str]]:
+        """
+        Continuously listen to the microphone, transcribe audio, and optionally save it.
+        
+        Returns:
+            A tuple (content, language) if speech is detected.
+        """
+        while True:
+            audio_data = self.microphone.listen()
+            if audio_data is None:
+                logger.warning("Listener: Invalid audio. Retrying...")
+                continue
+                
+            content, language = self.transcriber.transcribe(audio_data)
+            if not content:
+                logger.warning("Listener: No speech detected. Retrying...")
+                continue
+                    
+            if save_file:
+                data_path = str(self._get_data_path() / f"{save_file}.wav")
+                sf.write(data_path, audio_data, samplerate=16000)
+                logger.info(f"Listener: Audio saved to {data_path}")
+                
+            return content, language
+    
+    def _get_data_path(self) -> Path:
+        """Return the path to the voice database."""
+        return Path(__file__).resolve().parents[2] / 'data' / 'voids'
+from config import logger
+from datetime import datetime
+from typing_extensions import Optional
+
+import numpy as np
+import speech_recognition as sr
+
+class Microphone:
+    """
+    Handles microphone input and speech detection using the speech_recognition library.
+
+    Attributes:
+        recognizer: sr.Recognizer instance for detecting speech.
+        microphone: sr.Microphone instance for capturing audio.
+        max_listen_time: Maximum seconds to listen before timing out.
+        speech_limit: Maximum duration of a single speech segment.
+        phrase_time_limit: Maximum duration for a single phrase.
+    """
+
+    def __init__(self) -> None:
+        self.recognizer = sr.Recognizer()
+        self.microphone = sr.Microphone()
+
+        self.recognizer.pause_threshold = 1.3
+        self.recognizer.dynamic_energy_threshold = True
+        self.max_listen_time = 300
+        self.speech_limit = 60
+        self.phrase_time_limit = 1
+
+    def detect(self) -> bool:
+        """Detect if any speech occurs."""
+        with self.microphone as source:
+            self.recognizer.adjust_for_ambient_noise(source)
+            self.recognizer.energy_threshold = 2000
+            logger.info("Detecting speech...")
+            while True:
+                audio = self.recognizer.listen(source, phrase_time_limit=self.phrase_time_limit)
+                if audio and len(audio.frame_data) > 10:
+                    return True
+
+    def listen(self) -> Optional[np.ndarray]:
+        """
+        Listens for audio input and returns it as a numpy array.
+
+        Returns:
+            Optional[np.ndarray]: Audio data if speech is detected; otherwise None.
+        """
+        with self.microphone as source:
+            print(f"({datetime.now().strftime('%H:%M:%S')}) EVA is listening...", end="\r", flush=True)
+            self.recognizer.adjust_for_ambient_noise(source)
+            self.recognizer.energy_threshold = 1000
+            try:
+                audio_buffer = self.recognizer.listen(
+                    source, timeout=self.max_listen_time, phrase_time_limit=self.speech_limit
+                )
+                print("\033[K", end="")  # Clear line
+                raw_data = np.frombuffer(audio_buffer.get_raw_data(convert_rate=16000), dtype=np.int16)
+                return raw_data.astype(np.float32) / 32768.0
+            except sr.WaitTimeoutError:
+                logger.warning("Listener: No speech detected in the waiting period.")
+                return None
+            except Exception as e:
+                logger.error(f"Listener: Failed to listen to audio: {str(e)}")
+                return None
+import os
+from config import logger
+from typing import Optional, List
+from numpy import ndarray
+
+from torch import cuda
+from faster_whisper import WhisperModel
+
+class FWTranscriber:
+    """
+    Faster Whisper-based audio transcriber.
+
+    Attributes:
+        language (str): Language for transcription.
+        device (str): Device for model computation.
+        model (WhisperModel): Faster Whisper model instance.
+
+    Methods:
+        transcribe_audio: Transcribes audio using the model.
+    """
+
+    def __init__(self, language: str = "en"):
+        self.language: str = language
+        self.device: str = "cuda" if cuda.is_available() else "cpu"
+        self.model: WhisperModel = self._initialize_model()
+
+    def _initialize_model(self) -> WhisperModel:
+        """Initialize Faster Whisper model based on language."""
+        model_name = "distil-medium.en" if self.language.lower() == "en" else "large-v3"
+
+        if self.language.upper() == "MULTILINGUAL":
+            self.language = None
+
+        return WhisperModel(model_name, device=self.device, compute_type="float16")
+
+    def transcribe_audio(self, audioclip) -> tuple[Optional[str], Optional[str]]:
+        """
+        Transcribe audio using Faster Whisper.
+
+        Args:
+            audioclip (List or ndarray): Audio data to transcribe.
+
+        Returns:
+            Tuple of transcription string and detected language.
+        """
+        if not isinstance(audioclip, (List, ndarray)):
+            raise ValueError("Invalid audio format provided for transcription.")
+
+        try:
+            segments, info = self.model.transcribe(
+                audioclip,
+                language=self.language,
+                vad_filter=True,
+                vad_parameters={"threshold": 0.3}
+            )
+            transcription = "".join(segment.text for segment in segments)
+            transcription_language = info.language if self.language is None and info.language_probability > 0.8 else self.language
+        except Exception as e:
+            logger.error(f"Failed to transcribe audio: {str(e)}")
+            return None, None
+
+        return transcription, transcription_language
+
+    def __del__(self):
+        """Cleanup model and GPU memory."""
+        if hasattr(self, 'model') and self.model is not None:
+            del self.model
+            self.model = None
+        if self.device == "cuda":
+            cuda.empty_cache()
+
+import tempfile
+from config import logger
+from typing import Optional, List
+from numpy import ndarray
+
+from groq import Groq
+import scipy.io.wavfile as sf
+
+class GroqTranscriber:
+    """
+    Audio transcriber using Groq API and Whisper models.
+
+    Attributes:
+        language (str): Language for transcription.
+        model (Groq): Groq API client instance.
+        _sample_rate (int): Sample rate for temporary audio file.
+
+    Methods:
+        transcribe_audio: Transcribe a given audio clip.
+    """
+
+    def __init__(self, language: str = "en"):
+        self.language: str = language
+        self.model: Groq = Groq()
+        self._sample_rate: int = 16000
+
+    def transcribe_audio(self, audioclip) -> tuple[Optional[str], Optional[str]]:
+        """
+        Transcribe the given audio clip.
+
+        Args:
+            audioclip (List or ndarray): Audio data to transcribe.
+
+        Returns:
+            Tuple containing transcription text and language.
+        """
+        if not isinstance(audioclip, (List, ndarray)):
+            raise ValueError("Invalid audio format provided for transcription.")
+
+        model_name = "distil-whisper-large-v3-en" if self.language == "en" else "whisper-large-v3-turbo"
+
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as temp_file:
+                sf.write(temp_file.name, self._sample_rate, audioclip)
+                with open(temp_file.name, "rb") as audio_file:
+                    api_params = {
+                        "model": model_name,
+                        "file": audio_file,
+                        "response_format": "verbose_json",
+                        "prompt": "Specify punctuations."
+                    }
+
+                    if self.language.lower() != "multilingual":
+                        api_params["language"] = self.language
+
+                    response = self.model.audio.transcriptions.create(**api_params)
+
+                transcribed_language = response.language if self.language.lower() == "multilingual" else self.language
+
+        except Exception as e:
+            logger.error(f"Error: Failed to transcribe audio: {str(e)}")
+            return None, None
+
+        return response.text, transcribed_language
+
+import tempfile
+from config import logger
+from typing import Optional, List
+from numpy import ndarray
+
+from openai import OpenAI
+import scipy.io.wavfile as sf
+
+class WhisperTranscriber:
+    """
+    OpenAI Whisper transcriber
+    
+    Attributes:
+        language: The language to transcribe the audio in.
+        model: The OpenAI model.
+        temp_path: The path to the temporary file before sending to OpenAI.
+    Methods:
+        transcribe_audio: Transcribe the given audio clip using the OpenAI Whisper model.   
+    """
+    
+    def __init__(self, language: str = "en"):
+        self.model: OpenAI = OpenAI()
+        self.sample_rate: int = 16000
+        self.language: str = language
+    
+    def transcribe_audio(self, audioclip) -> tuple[Optional[str], Optional[str]]:
+        """ Transcribe the given audio clip using the OpenAI Whisper model """
+
+        if not isinstance(audioclip, (List, ndarray)):
+            raise ValueError("Invalid audio format provided for transcription.")
+        
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=True) as temp_file:
+                sf.write(temp_file.name, self.sample_rate, audioclip)
+
+                with open(temp_file.name, 'rb') as audio_file:
+                    api_params = {
+                        "model": "whisper-1",
+                        "file": audio_file,
+                        "prompt": "specify punctuation",
+                        "response_format": "verbose_json",
+                    }
+                
+                    if self.language != "multilingual":
+                        api_params["language"] = self.language
+                        
+                    response = self.model.audio.transcriptions.create(**api_params)
+                
+                # return the language of the audio if it is multilingual
+                language = response.language if self.language == "multilingual" else self.language
+                
+        except Exception as e:
+            logger.error(f"Error: Failed to transcribe audio with OpenAI Whisper: {str(e)}")
+            return None, None
+        
+        return response.text, language
+
+from config import logger
+import os
+from datetime import datetime
+import threading
+import secrets
+from queue import Queue
+from typing import Dict, Optional, Callable
+
+from utils.stt.voiceid import VoiceIdentifier
+
+class Transcriber:
+    """
+    Handles audio transcription and optional speaker identification using various models.
+
+    Args:
+        model_name (str): Name of the transcription model ("faster-whisper", "whisper", or "groq").
+        language (str): Language code for transcription.
+
+    Attributes:
+        _model_selection: Uppercase model name.
+        _model_language: Target language.
+        model: Initialized transcription model instance.
+        identifier: VoiceIdentifier instance for speaker recognition.
+        name_queue: Queue to collect speaker ID results.
+    """
+
+    def __init__(self, model_name: str = "faster-whisper", language: str = "en"):
+        self._model_selection: str = model_name.upper()
+        self._model_language: str = language
+
+        self.model = self._initialize_model()
+        self.identifier = VoiceIdentifier()
+        self.name_queue = Queue()
+
+        logger.info(f"Transcriber: {self._model_selection} is ready.")
+
+    def _get_model_factory(self) -> Dict[str, Callable]:
+        return {
+            "FASTER-WHISPER": self._create_fasterwhisper_model,
+            "WHISPER": self._create_whisper_model,
+            "GROQ": self._create_groq_model,
+        }
+
+    def _create_groq_model(self):
+        from utils.stt.model_groq import GroqTranscriber
+        try:
+            return GroqTranscriber(self._model_language)
+        except Exception as e:
+            raise Exception(f"Error: Failed to load Groq Model: {str(e)}")
+
+    def _create_fasterwhisper_model(self):
+        from utils.stt.model_fasterwhisper import FWTranscriber
+        try:
+            return FWTranscriber(self._model_language)
+        except Exception as e:
+            raise Exception(f"Error: Failed to load Faster Whisper Model: {str(e)}")
+
+    def _create_whisper_model(self):
+        from utils.stt.model_whisper import WhisperTranscriber
+        try:
+            return WhisperTranscriber(self._model_language)
+        except Exception as e:
+            raise Exception(f"Error: Failed to load Whisper Model: {str(e)}")
+
+    def _initialize_model(self):
+        """Initialize the selected transcription model."""
+        model_factory = self._get_model_factory()
+        model_ctor = model_factory.get(self._model_selection)
+        if model_ctor is None:
+            raise ValueError(f"Error: Model {self._model_selection} is not supported")
+        return model_ctor()
+
+    def transcribe(self, audioclip) -> Optional[tuple[str, str]]:
+        """
+        Transcribe an audio clip and optionally identify the speaker.
+
+        Returns:
+            Tuple containing the transcription string and language, or (None, None) if failed.
+        """
+        # Clear previous queue
+        while not self.name_queue.empty():
+            self.name_queue.get()
+
+        # Start speaker identification in a separate thread
+        thread = threading.Thread(target=self.identifier.identify, args=(audioclip, self.name_queue))
+        thread.start()
+
+        transcription, language = self.model.transcribe_audio(audioclip)
+        if not transcription:
+            thread.join()
+            return None, None
+
+        identification = self.name_queue.get()
+        thread.join()
+
+        if identification == "unknown":
+            content = f": <human_reply>{transcription.strip()}</human_reply> (I couldn't identify the voice.)"
+            display = f"User:{transcription}"
+        else:
+            name = self.identifier.get_name(identification)
+            content = f"{name} ({identification}):: <human_reply>{transcription.strip()}</human_reply>"
+            display = f"{name}:{transcription}"
+
+        print(f"({datetime.now().strftime('%H:%M:%S')}) {display}")
+        return content, language
+
+import os
+from pathlib import Path
+from config import logger
+from queue import Queue
+from typing import Dict
+
+import wespeaker as wp
+import torch
+import numpy as np
+
+from core.ids import id_manager
+
+class VoiceIdentifier:
+    """
+    Identifies speakers using voice embeddings with Wespeaker.
+    
+    Attributes:
+        _void_list: Mapping of known voice IDs to names.
+        voice_recognizer: Wespeaker model instance for recognition.
+    """
+
+    def __init__(self):
+        self._void_list = id_manager.get_void_list()
+        self.voice_recognizer = self._initialize_recognizer()
+
+    def _initialize_recognizer(self):
+        try:
+            model = wp.load_model('english')  # or 'chinese'
+            num_loaded = 0
+
+            vid_directory = Path(__file__).resolve().parents[2] / 'data' / 'voids'
+            vid_directory.mkdir(parents=True, exist_ok=True)
+
+            for filename in os.listdir(vid_directory):
+                if filename.lower().endswith('.wav'):
+                    name = os.path.splitext(filename)[0]
+                    if name in self._void_list:
+                        filepath = os.path.join(vid_directory, filename)
+                        model.register(name, filepath)
+                        num_loaded += 1
+
+        except Exception as e:
+            raise Exception(f"Error: Failed to set up voice recognizer: {str(e)}")
+
+        logger.info(f"Voice Identifier: {num_loaded} Voice IDs loaded.")
+        return model
+
+    @staticmethod
+    def _convert_numpy_to_torch(audio_array: np.ndarray) -> torch.Tensor:
+        """Convert numpy audio array to 2D torch tensor with float32 dtype."""
+        if audio_array is None:
+            logger.error("No audio array provided")
+            return None
+
+        if audio_array.dtype in [np.int16, np.int32]:
+            audio_array = audio_array.astype(np.float32) / 32768.0
+
+        if audio_array.ndim == 1:
+            audio_array = audio_array[np.newaxis, :]
+
+        return torch.tensor(audio_array, dtype=torch.float32)
+
+    def _recognize_audio(self, audio: torch.Tensor, sample_rate: int = 16000) -> str:
+        """Return the recognized speaker name or 'unknown' based on cosine similarity."""
+        embedding = self.voice_recognizer.extract_embedding_from_pcm(audio, sample_rate)
+        best_score, best_name = 0.0, ""
+
+        for name, e in self.voice_recognizer.table.items():
+            score = self.voice_recognizer.cosine_similarity(embedding, e)
+            if score > best_score:
+                best_score, best_name = score, name
+
+        return best_name if best_score > 0.7 else "unknown"
+
+    def identify(self, audioclip: np.ndarray, name_queue: Queue) -> None:
+        """Identify speaker from an audio clip and put the result in the provided queue."""
+        try:
+            torch_audio = self._convert_numpy_to_torch(audioclip)
+            result = self._recognize_audio(torch_audio)
+        except Exception as e:
+            logger.error(f"Failed to recognize audio: {str(e)}")
+            result = "unknown"
+
+        name_queue.put(result)
+
+    def get_name(self, void: str) -> str:
+        """Retrieve the mapped name from the void list, default to 'unknown' if missing."""
+        return self._void_list.get(void, "unknown")
+
+import os
+import tempfile
+from threading import Thread
+from typing import Union, Optional
+
+import sounddevice as sd
+import soundfile as sf
+import numpy as np
+import mpv
+
+class AudioPlayer:
+    """
+    A class to play audio data, either from files, numpy arrays, or streaming sources.
+    
+    Attributes:
+        _sample_rate (int): Sample rate for numpy audio data.
+        _audio_thread (Optional[Thread]): Thread for async playback.
+        player (mpv.MPV): MPV player instance for streaming.
+    
+    Methods:
+        play_audio: Play audio from a file or numpy array.
+        stream: Stream audio from an MP3 URL asynchronously.
+        play_openai_stream: Play audio from OpenAI streaming response.
+    """
+    
+    def __init__(self):
+        self._sample_rate: int = 22050
+        self._audio_thread: Optional[Thread] = None
+        self.player: mpv.MPV = mpv.MPV()
+    
+    def play_audio(self, audio_data: Optional[Union[str, np.ndarray]], from_file: bool = False) -> None:
+        if audio_data is None:
+            return
+        try:
+            if from_file:
+                if not os.path.exists(audio_data):
+                    raise FileNotFoundError(f"File not found: {audio_data}")
+                audio_data, sample_rate = sf.read(audio_data)
+                if audio_data.dtype != np.float32:
+                    max_val = np.iinfo(audio_data.dtype).max if np.issubdtype(audio_data.dtype, np.integer) else 1.0
+                    audio_data = (audio_data / max_val).astype(np.float32)
+            else:
+                sample_rate = self._sample_rate
+            sd.play(audio_data, sample_rate)
+            sd.wait()
+        except Exception as e:
+            raise Exception(f"Error: Failed to play audio: {e}")
+    
+    def _play_mp3_stream(self, mp3_url: str) -> None:
+        try:
+            player = mpv.MPV(ytdl=True)
+            player.volume = 50
+            player.play(mp3_url)
+            player.wait_for_playback()
+            player.terminate()
+        except Exception as e:
+            raise Exception(f"Error: Failed to play mp3 stream: {e}")
+    
+    def stream(self, url: str) -> None:
+        if not url:
+            return
+        if self._audio_thread and self._audio_thread.is_alive():
+            self._audio_thread.join()
+        self._audio_thread = Thread(target=self._play_mp3_stream, daemon=True, args=(url,))
+        self._audio_thread.start()
+    
+    def play_openai_stream(self, audio_stream) -> None:
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
+                for chunk in audio_stream.iter_bytes():
+                    temp_file.write(chunk)
+                temp_file_path = temp_file.name
+            self.player.play(temp_file_path)
+            self.player.wait_for_playback()
+            os.unlink(temp_file_path)
+        except Exception as e:
+            raise Exception(f"Error: Failed to play OpenAI stream: {e}")
+    
+    def __del__(self) -> None:
+        if self._audio_thread and self._audio_thread.is_alive():
+            self._audio_thread.join()
+
+import os
+import time
+import secrets
+from threading import Thread
+from queue import Queue, Empty
+from typing import Optional, List
+
+import nltk
+import numpy as np
+from torch import cuda
+from pydub import AudioSegment
+from TTS.api import TTS
+
+from utils.tts.audio_player import AudioPlayer
+
+
+class CoquiSpeaker:
+    """
+    Audio speaker using Coqui TTS.
+    
+    Attributes:
+        language (str): Language code for TTS.
+        device (str): Device used for TTS (GPU if available).
+        model (TTS): Coqui TTS model.
+        player (AudioPlayer): Player for audio output.
+        audio_queue (Queue): Queue for generated audio chunks.
+        play_thread (Thread): Background thread for playback.
+    
+    Methods:
+        eva_speak: Speak a given text with optional language and wait.
+        generate_audio: Convert text to mp3 files and save them.
+        stop_playback: Stops audio playback gracefully.
+    """
+    
+    def __init__(self, language: str = "en") -> None:
+        self.language: str = language
+        self.device: str = "cuda" if cuda.is_available() else "cpu"
+        self.play_thread: Optional[Thread] = None
+        self.speakerID: Optional[str] = None
+        
+        self.audio_queue: Queue = Queue()
+        self.model: TTS = self._initialize_TTS()
+        self.player: AudioPlayer = AudioPlayer()
+    
+    def _initialize_TTS(self) -> TTS:
+        """Initialize Coqui TTS model based on language."""
+        if self.language == "en":
+            self.speakerID = "p306"
+            model_name = "tts_models/en/vctk/vits"
+        else:
+            self.speakerID = "Daisy Studious"
+            model_name = "tts_models/multilingual/multi-dataset/xtts_v2"
+        return TTS(model_name=model_name).to(self.device)
+    
+    def play(self) -> None:
+        """Continuously play audio chunks from the queue."""
+        while True:
+            try:
+                wav = self.audio_queue.get(timeout=0.1)
+                if wav is None:
+                    break
+                self.player.play_audio(wav)
+                time.sleep(0.3)
+                self.audio_queue.task_done()
+            except Empty:
+                continue
+    
+    def _generate_speech(self, text: str, language: Optional[str] = None) -> List[np.ndarray]:
+        """Generate speech audio from text."""
+        language = "zh-cn" if language == "zh" else language
+        if self.language == "en":
+            return self.model.tts(text=text, speaker=self.speakerID)
+        return self.model.tts(text=text, speaker=self.speakerID, language=language)
+    
+    def eva_speak(self, text: str, language: Optional[str] = "en", wait: bool = True) -> None:
+        """Convert text to speech and play it asynchronously."""
+        sentences = nltk.sent_tokenize(text)
+        if not self.play_thread:
+            self.play_thread = Thread(target=self.play, daemon=True)
+            self.play_thread.start()
+        for sentence in sentences:
+            wav = self._generate_speech(sentence, language)
+            self.audio_queue.put(wav)
+        if wait:
+            self.audio_queue.put(None)
+            self.stop_playback()
+    
+    def stop_playback(self) -> None:
+        """Stop the playback thread gracefully."""
+        if self.play_thread:
+            self.play_thread.join()
+            self.play_thread = None
+    
+    def generate_audio(self, text: str, media_folder: str) -> Optional[List[str]]:
+        """Generate MP3 files from text and save them."""
+        audio_files = []
+        try:
+            sentences = nltk.sent_tokenize(text)
+            for sentence in sentences:
+                wav = self._generate_speech(sentence)
+                audio_data = (np.array(wav) * 32767).astype(np.int16)
+                filename = f"{secrets.token_hex(16)}.mp3"
+                file_path = os.path.join(media_folder, "audio", filename)
+                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                audio = AudioSegment(audio_data.tobytes(), frame_rate=22050, sample_width=2, channels=1)
+                audio.export(file_path, format="mp3")
+                audio_files.append(f"audio/{filename}")
+            return audio_files
+        except Exception as e:
+            logger.error(f"Error during text-to-speech synthesis: {e}")
+            return None
+    
+    def __del__(self):
+        self.stop_playback()
+        if hasattr(self, "model") and self.model is not None:
+            del self.model
+            self.model = None
+        if self.device == "cuda":
+            cuda.empty_cache()
+
+from config import logger
+import os
+import secrets
+from threading import Thread
+from typing import Optional
+
+from elevenlabs.client import ElevenLabs
+from elevenlabs import stream, VoiceSettings
+
+
+class ElevenLabsSpeaker:
+    """
+    TTS speaker using ElevenLabs API.
+    
+    Attributes:
+        model (ElevenLabs): ElevenLabs client instance.
+        audio_thread (Optional[Thread]): Background thread for non-blocking playback.
+        voice (str): Selected voice identifier.
+    
+    Methods:
+        eva_speak: Speak text using ElevenLabs TTS, either blocking or asynchronous.
+        generate_audio: Generate and save MP3 file from text.
+    """
+    
+    def __init__(self, voice: str = "TbMNBJ27fH2U0VgpSNko") -> None:
+        self.model: ElevenLabs = ElevenLabs()
+        self.audio_thread: Optional[Thread] = None
+        self.voice: str = voice
+    
+    def eva_speak(self, text: str, language: Optional[str] = None, wait: bool = True) -> None:
+        """Speak text using ElevenLabs TTS."""
+        model_name = "eleven_flash_v2" if language == "en" else "eleven_flash_v2_5"
+        
+        try:
+            audio_stream = self.model.generate(
+                model=model_name,
+                output_format="mp3_22050_32",
+                text=text,
+                voice=self.voice,
+                stream=True,
+                optimize_streaming_latency=1,
+                voice_settings=VoiceSettings(
+                    stability=0.5,
+                    similarity_boost=0.8,
+                    use_speaker_boost=True
+                )
+            )
+            
+            if self.audio_thread and self.audio_thread.is_alive():
+                self.audio_thread.join()
+            
+            if wait:
+                stream(audio_stream)
+            else:
+                self.audio_thread = Thread(target=lambda: stream(audio_stream), daemon=True)
+                self.audio_thread.start()
+                
+        except Exception as e:
+            logger.error(f"Error during text-to-speech synthesis: {e}")
+    
+    def generate_audio(self, text: str, language: Optional[str], media_folder: str) -> Optional[str]:
+        """Generate MP3 from text using ElevenLabs and save it."""
+        model_name = "eleven_monolingual_v1" if language == "en" else "eleven_turbo_v2_5"
+        filename = f"{secrets.token_hex(16)}.mp3"
+        file_path = os.path.join(media_folder, "audio", filename)
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
+        try:
+            audio_stream = self.model.generate(
+                model=model_name,
+                output_format="mp3_22050_32",
+                text=text,
+                voice=self.voice
+            )
+            
+            with open(file_path, "wb") as f:
+                for chunk in audio_stream:
+                    f.write(chunk)
+            
+            logger.info(f"Audio file saved to: {file_path}")
+            return f"audio/{filename}"
+        
+        except Exception as e:
+            logger.error(f"Error during text-to-speech synthesis: {e}")
+            return None
+
+from config import logger
+import os
+import secrets
+from threading import Thread
+from typing import Optional
+
+from openai import OpenAI
+from utils.tts.audio_player import AudioPlayer
+
+
+class OpenAISpeaker:
+    """
+    Audio speaker using OpenAI TTS.
+    
+    Attributes:
+        model (OpenAI): OpenAI client instance.
+        audio_player (AudioPlayer): Player for streaming or file playback.
+        voice (str): Default voice to use for TTS.
+        audio_thread (Optional[Thread]): Background thread for non-blocking playback.
+    
+    Methods:
+        eva_speak: Speak text using OpenAI TTS (blocking or non-blocking).
+        generate_audio: Generate and save MP3 file from text.
+    """
+    
+    def __init__(self, voice: str = "nova") -> None:
+        self.model: OpenAI = OpenAI()
+        self.audio_player: AudioPlayer = AudioPlayer()
+        self.voice: str = voice
+        self.audio_thread: Optional[Thread] = None
+    
+    def eva_speak(self, text: str, language: Optional[str] = None, wait: bool = True) -> None:
+        """Speak text using OpenAI TTS."""
+        try:
+            response = self.model.audio.speech.create(
+                model="tts-1",
+                voice=self.voice,
+                response_format="mp3",
+                input=text
+            )
+            
+            if self.audio_thread and self.audio_thread.is_alive():
+                self.audio_thread.join()
+            
+            if wait:
+                self.audio_player.play_openai_stream(response)
+            else:
+                self.audio_thread = Thread(target=lambda: self.audio_player.play_openai_stream(response), daemon=True)
+                self.audio_thread.start()
+        
+        except Exception as e:
+            logger.error(f"Error during text-to-speech synthesis: {e}")
+    
+    def generate_audio(self, text: str, media_folder: str) -> Optional[str]:
+        """Generate MP3 from text using OpenAI TTS and save to disk."""
+        filename = f"{secrets.token_hex(16)}.mp3"
+        file_path = os.path.join(media_folder, "audio", filename)
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
+        try:
+            response = self.model.audio.speech.create(
+                model="tts-1",
+                voice=self.voice,
+                response_format="mp3",
+                input=text
+            )
+            
+            with open(file_path, "wb") as f:
+                response.write_to_file(file_path)
+            
+            logger.info(f"Audio file saved to: {file_path}")
+            return f"audio/{filename}"
+        
+        except Exception as e:
+            logger.error(f"Error during text-to-speech synthesis: {e}")
+            return None
+
+from datetime import datetime
+from config import logger
+from typing import Dict, Callable, Optional
+from pathlib import Path
+
+class Speaker:
+    """
+    Manages text-to-speech models and handles speaking text.
+
+    Attributes:
+        _model_selection (str): Selected speaker model name in uppercase.
+        _language (str): Language code for TTS.
+        _media_folder (Path): Folder to save generated audio.
+        model: Initialized speaker model instance.
+    Methods:
+        speak: Speak text using the selected TTS model.
+        stop_speaking: Stop ongoing playback.
+        get_audio: Generate and save audio from text.
+    """
+
+    def __init__(self, speaker_model: str = "coqui", language: str = "en"):
+        self._model_selection: str = speaker_model.upper()
+        self._language: str = language
+        self._media_folder: Path = self._get_data_path()
+        self.model = self._initialize_model()
+        
+        logger.info(f"Speaker: {self._model_selection} is ready.")
+    
+    def _get_model_factory(self) -> Dict[str, Callable]:
+        return {
+            "COQUI": self._create_coqui_model,
+            "ELEVENLABS": self._create_elevenlab_model,
+            "OPENAI": self._create_openai_model,
+        }
+
+    def _create_coqui_model(self):
+        from utils.tts.model_coqui import CoquiSpeaker
+        try:
+            return CoquiSpeaker(language=self._language)
+        except Exception as e:
+            raise Exception(f"Error: Failed to initialize Coqui TTS model: {e}")
+
+    def _create_elevenlab_model(self):
+        from utils.tts.model_elevenlabs import ElevenLabsSpeaker
+        try:
+            return ElevenLabsSpeaker()
+        except Exception as e:
+            raise Exception(f"Error: Failed to initialize ElevenLabs model: {e}")
+
+    def _create_openai_model(self):
+        from utils.tts.model_openai import OpenAISpeaker
+        try:
+            return OpenAISpeaker()
+        except Exception as e:
+            raise Exception(f"Error: Failed to initialize OpenAI model: {e}")
+
+    def _initialize_model(self):
+        model_factory = self._get_model_factory()
+        model_creator = model_factory.get(self._model_selection)
+        if not model_creator:
+            raise ValueError(f"Error: Model {self._model_selection} is not supported.")
+        return model_creator()
+
+    def speak(self, text: str, language: Optional[str] = "en", wait: bool = True) -> None:
+        """Speak text using the selected speaker model."""
+        try:
+            print(f"\n({datetime.now().strftime('%H:%M:%S')}) EVA: {text}")
+            self.model.eva_speak(text, language, wait)
+        except Exception as e:
+            raise Exception(f"Error: Failed to speak: {e}")
+
+    def stop_speaking(self) -> None:
+        """Stop current playback."""
+        self.model.stop_playback()
+
+    def get_audio(self, text: str) -> str:
+        """Generate and save audio from text."""
+        return self.model.generate_audio(text, self._language, self._media_folder)
+
+    def _get_data_path(self) -> Path:
+        """Return the path to the media folder."""
+        return Path(__file__).resolve().parents[2] / "data" / "media"
+
+from config import logger
+import numpy as np
+import base64
+import threading
+from functools import partial
+from queue import Queue
+from typing import Dict, Callable
+
+import cv2
+from utils.vision.identifier import Identifier
+
+
+class Describer:
+    """
+    A class that processes and describes images using various vision models.
+
+    This class provides a unified interface for different vision models (Ollama, OpenAI, Groq)
+    and handles image processing, person identification, and natural language descriptions.
+    """
+    
+    def __init__(self, model_name: str = "llava-phi3", base_url: str = 'http://localhost:11434/'):
+        self._model_selection: str = model_name.upper()
+        self._base_url: str = base_url
+        self.name_queue = Queue()
+        
+        self.identifier = Identifier()
+        self.model = self._initialize_model()
+
+        logger.info(f"Describer: {self._model_selection} is ready.")
+        
+    def _get_model_factory(self) -> Dict[str, Callable]:
+        return {
+            "LLAVA-PHI3" : partial(self._create_ollama_model, "llava-phi3"),
+            "LLAMA" : partial(self._create_ollama_model, "llama3.2-vision"),
+            "OPENAI" : self._create_openai_model,
+            "GROQ" : self._create_groq_model
+        }
+        
+    def _create_ollama_model(self, model_name: str):
+        from utils.vision.model_ollama import OllamaVision
+        return OllamaVision(model_name, self._base_url)
+    
+    def _create_openai_model(self):
+        from utils.vision.model_openai import OpenAIVision
+        return OpenAIVision()
+    
+    def _create_groq_model(self):
+        from utils.vision.model_groq import GroqVision
+        return GroqVision()
+    
+    def _initialize_model(self):
+        model_factory = self._get_model_factory()
+        model = model_factory.get(self._model_selection)
+        if model is None:
+            raise ValueError(f"Error: Model {self._model_selection} is not supported")
+        return model()
+    
+    def _convert_base64(self, image_data: np.ndarray | str) -> str:
+        """ Convert image data to base64. """
+        if isinstance(image_data, np.ndarray):
+            _, buffer = cv2.imencode('.jpg', image_data)
+            image_data = base64.b64encode(buffer).decode('utf-8')
+        return image_data
+    
+    def analyze_screenshot(self, image_data: np.ndarray | str, query: str) -> str | None:
+        """ Describe a screenshot using the vision model. """
+        image_base64 = self._convert_base64(image_data)
+        try:
+            result = self.model.generate(template_name="screenshot",
+                                        image=image_base64,
+                                        query=query)
+        except Exception as e:
+            logger.error(f"Error: Failed to describe screenshot: {str(e)}")
+            return None
+        return result
+        
+    def describe(self, template_name: str, image_data: np.ndarray | str) -> str | None:
+        """ Describe an image and identify any known person. """
+        try:    
+            thread = threading.Thread(target=self.identifier.identify, args=(image_data, self.name_queue))
+            thread.start()
+            
+            image_base64 = self._convert_base64(image_data)
+            sight = self.model.generate(template_name=template_name,
+                                        image=image_base64)
+        except Exception as e:
+            logger.error(f"Error: Failed to describe image: {str(e)}")
+            return None
+        
+        name = self.name_queue.get()
+        thread.join()
+        
+        return sight if name == "unknown" else sight + f" I recognize it's {name}."
+
+from config import logger
+import os
+import base64
+from pathlib import Path
+from queue import Queue
+from typing import Dict, List, Union
+
+from core.ids import id_manager
+import face_recognition as fr
+import numpy as np
+import cv2
+
+class Identifier:
+    """
+    Class to identify individuals from frames using face recognition.
+
+    Attributes:
+        _ids (dict): A dictionary containing the photo IDs and corresponding face encodings.
+    """
+    def __init__(self):
+        self._pid_list = None
+        self._ids: Dict[str, tuple[str, np.ndarray]] = self.initialize_ids()
+        logger.info(f"Identifier: Personal Identifier is Ready. {len(self._ids)} IDs loaded.")
+        
+    def initialize_ids(self) -> Dict[str, tuple[str, np.ndarray]]:
+        """ Load the photo IDs and corresponding face encodings. """
+        self._pid_list = id_manager.get_pid_list()
+        pid_directory = Path(__file__).resolve().parents[2] / 'data' / 'pids'
+        pid_directory.mkdir(parents=True, exist_ok=True)
+            
+        photo_ids = {}
+        for filename in os.listdir(pid_directory):
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                filepath = os.path.join(pid_directory, filename)
+                try:
+                    id = str(len(photo_ids) + 1).zfill(3)
+                    name = os.path.splitext(filename)[0]
+                    image = fr.load_image_file(filepath)
+                    encodings = fr.face_encodings(image)
+                    
+                    if encodings:
+                        photo_ids[id] = (name, encodings[0])
+                    else:
+                        logger.warning(f"No faces found in the image: {filename}")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing {filename}: {str(e)}")
+        
+        return photo_ids
+    
+    def _base64_to_numpy(self, base64_str: str) -> np.ndarray:
+        """ Convert a base64 string to a numpy array. """
+        img_array = np.frombuffer(base64.b64decode(base64_str), dtype=np.uint8)
+        return cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    
+    def identify(self, frames: Union[np.ndarray, str], name_queue: Queue) -> None:
+        """ Identify individuals from the given frames. """
+        if isinstance(frames, str):
+            frames = self._base64_to_numpy(frames)
+        
+        try:
+            small_frame = cv2.resize(frames, (0, 0), fx=0.5, fy=0.5)
+            rgb_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+
+            face_locations = fr.face_locations(rgb_frame)
+            face_encodings = fr.face_encodings(rgb_frame, face_locations)
+
+            names = []
+            for face_encoding in face_encodings:
+                for _, (name, known_encoding) in self._ids.items():
+                    if fr.compare_faces([known_encoding], face_encoding)[0] and name in self._pid_list:
+                        names.append(self._pid_list[name])
+                        break
+                    
+        except Exception as e:
+            logger.error(f"Failed to identify faces: {str(e)}")
+            names = []
+
+        result_name = "unknown" if not names else ", ".join(names)
+        name_queue.put(result_name)
+
+from config import logger
+from typing import Optional
+from groq import Groq
+
+from utils.prompt import load_prompt
+
+class GroqVision:
+    """
+    Vision model interface for Groq API.
+
+    Attributes:
+        client (Groq): The Groq client.
+        model_name (str): The Groq model name.
+        temperature (float): Sampling temperature for text generation.
+    """
+    def __init__(
+        self,
+        model_name: str = "llama-3.2-11b-vision-preview",
+        temperature: float = 0.1
+    ):
+        self.client = Groq()
+        self.model_name = model_name
+        self.temperature = temperature
+
+    def generate(self, template_name: str, image: str, **kwargs) -> Optional[str]:
+        """
+        Generate a description for an image using a Groq model.
+
+        Args:
+            template_name (str): The template to use for the prompt.
+            image (str): Base64-encoded JPEG image data.
+            **kwargs: Additional keyword arguments for the prompt template.
+
+        Returns:
+            Optional[str]: The generated description, or None if an error occurred.
+        """
+        try:
+            prompt_template = load_prompt(f"{template_name}_groq").format(**kwargs)
+            
+            response = self.client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt_template},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{image}"}
+                            },
+                        ],
+                    }
+                ],
+                model=self.model_name,
+                temperature=self.temperature
+            )
+            
+            return response.choices[0].message.content
+        
+        except Exception as e:
+            logger.error(f"GroqVision: Failed to generate description: {str(e)}")
+            return None
+
+from config import logger
+from ollama import Client
+from typing import Optional
+
+from utils.prompt import load_prompt
+
+class OllamaVision:
+    """
+    Ollama Vision model interface.
+
+    Attributes:
+        client (Client): Ollama API client.
+        model (str): The model name.
+        keep_alive (str): Keep-alive duration for the connection.
+        temperature (float): Sampling temperature for text generation.
+    """
+    def __init__(
+        self, 
+        model_name: str, 
+        base_url: str,
+        keep_alive: str = "1h",
+        temperature: float = 0.1
+    ):
+        self.client = Client(base_url)
+        self.model = model_name
+        self.keep_alive = keep_alive
+        self.temperature = temperature
+        
+    def generate(self, template_name: str, image: str, **kwargs) -> Optional[str]:
+        """
+        Generate a description for an image using the Ollama model.
+
+        Args:
+            template_name (str): Template to use for prompt formatting.
+            image (str): Base64-encoded image data.
+            **kwargs: Additional variables for the prompt template.
+
+        Returns:
+            Optional[str]: Generated description, or None if an error occurred.
+        """
+        try:
+            prompt_template = load_prompt(f"{template_name}_ollama").format(**kwargs)
+            
+            response = self.client.generate(
+                model=self.model,
+                keep_alive=self.keep_alive,
+                prompt=prompt_template,
+                images=[image],
+                options=dict(temperature=self.temperature)
+            )
+            
+            return response.get('response', None)
+        
+        except Exception as e:
+            logger.error(f"OllamaVision: Failed to generate description with {self.model}: {str(e)}")
+            return None
+
+from config import logger
+from typing import Optional
+from openai import OpenAI
+
+from utils.prompt import load_prompt
+
+class OpenAIVision:
+    """
+    OpenAI Vision model interface for generating descriptions from images.
+
+    Attributes:
+        client (OpenAI): OpenAI API client.
+        model_name (str): Name of the OpenAI model to use.
+        temperature (float): Sampling temperature for text generation.
+    """
+    def __init__(
+        self,
+        model_name: str = "gpt-4o-mini",
+        temperature: float = 0.1
+    ):
+        self.client = OpenAI()
+        self.model_name = model_name
+        self.temperature = temperature
+
+    def generate(self, template_name: str, image: str, **kwargs) -> Optional[str]:
+        """
+        Generate a description for an image using OpenAI's model.
+
+        Args:
+            template_name (str): Template name for formatting the prompt.
+            image (str): Base64-encoded image string.
+            **kwargs: Additional variables to format the prompt template.
+
+        Returns:
+            Optional[str]: The generated description or None if an error occurred.
+        """
+        try:
+            prompt_template = load_prompt(f"{template_name}_ollama").format(**kwargs)
+            
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt_template},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}} 
+                        ]
+                    }
+                ],
+                temperature=self.temperature
+            )
+
+            return response.choices[0].message.content
+        
+        except Exception as e:
+            logger.error(f"OpenAIVision: Failed to generate description with {self.model_name}: {str(e)}")
+            return None
+
+from config import logger
+import numpy as np
+from pathlib import Path
+import cv2
+from utils.vision.describer import Describer
+from utils.vision.webcam import Webcam
+
+
+class Watcher:
+    """
+    Manages video capture and analysis using computer vision.
+
+    Attributes:
+        describer (Describer): Vision model for image description.
+        device (Webcam): Video capture device.
+        _previous_frame (np.ndarray | None): Last captured grayscale frame for motion detection.
+        _change_threshold (float): Minimum frame change fraction to trigger description.
+    """
+    
+    def __init__(self, model_name: str, base_url: str):
+        self.describer: Describer = Describer(model_name, base_url)
+        self.device: Webcam = Webcam()
+        self._previous_frame: np.ndarray | None = None
+        self._change_threshold: float = 0.4
+        
+    def _is_diff_frame(self, frame: np.ndarray) -> bool:
+        """Check if the frame has changed significantly compared to the previous frame."""
+        gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        if self._previous_frame is None:
+            self._previous_frame = gray_frame
+            return True
+        
+        frame_diff = cv2.absdiff(gray_frame, self._previous_frame)
+        changed_pixels = np.count_nonzero(frame_diff > 10)
+        change_percentage = changed_pixels / frame_diff.size
+        self._previous_frame = gray_frame
+        
+        return change_percentage > self._change_threshold
+    
+    def glance(self) -> str | None:
+        """
+        Capture and analyze a single frame.
+        
+        Returns:
+            str | None: Description if a significant change is detected; otherwise None.
+        """
+        try:
+            frame = self.device.capture()
+            if frame is not None and self._is_diff_frame(frame):
+                frame = cv2.resize(frame, (320, 240))
+                return self.describer.describe("vision", frame)
+        except Exception as e:
+            logger.error(f"Watcher: Failed to capture/analyze frame: {e}")
+        
+        return None
+    
+    def capture(self, save_file: str) -> None:
+        """Capture a frame and save it to the PID database."""
+        try:
+            frame = self.device.capture()
+            if frame is not None:
+                data_path = self._get_data_path() / f"{save_file}.jpg"
+                cv2.imwrite(data_path, frame)
+                logger.info(f"Watcher: Frame saved to {data_path}")
+        except Exception as e:
+            logger.error(f"Watcher: Failed to capture/save frame: {e}")
+
+    def _get_data_path(self) -> Path:
+        """Return the path to the PID database folder."""
+        return Path(__file__).resolve().parents[2] / 'data' / 'pids'
+    
+    def deactivate(self) -> None:
+        """Stop the webcam device."""
+        if self.device is not None:
+            self.device.stop_watch()
+
+import os
+import time
+import numpy as np
+from multiprocessing import Process, Manager
+import cv2
+from config import logger
+
+class Webcam:
+    """
+    Handles webcam capture and motion detection.
+
+    Attributes:
+        camera_index (int): Index of the webcam.
+        camera (cv2.VideoCapture): OpenCV camera object.
+        watching (bool): Flag indicating if motion watching is active.
+        process (Process | None): Background process for motion detection.
+    """
+
+    def __init__(self, camera_index: int = 0):
+        self._camera_index = camera_index
+        self.manager = Manager()
+        self.observation = self.manager.list()
+        self.watching = self.manager.Value('b', False)
+        self.camera = self._initialize_camera()
+        self.process = None
+
+    def _initialize_camera(self) -> cv2.VideoCapture:
+        """Initialize the webcam."""
+        try:
+            cam = cv2.VideoCapture(self._camera_index, cv2.CAP_V4L2)
+            cam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            if not cam.isOpened():
+                raise ConnectionError(f"Could not connect to webcam {self._camera_index}")
+            return cam
+        except Exception as e:
+            logger.error(f"Failed to initialize camera: {e}")
+            raise
+
+    def get_observation(self, wait: bool = False) -> str:
+        """Get the latest observation from the motion watcher."""
+        if not self.observation and not wait:
+            return "nothing"
+
+        start_time = time.time()
+        timeout = 20  # seconds
+        while True:
+            if self.observation or (time.time() - start_time > timeout):
+                break
+            time.sleep(1)
+
+        return self.observation[-1] if self.observation else "nothing"
+
+    def start_watch(self) -> bool:
+        """Start the background process for motion detection."""
+        if self.process is None and not self.watching.value:
+            try:
+                self.watching.value = True
+                self.process = Process(target=self.watch_camera, args=(self.watching, self.observation))
+                self.process.daemon = True
+                self.process.start()
+            except Exception as e:
+                raise RuntimeError(f"Failed to start watcher: {e}")
+            logger.info("Webcam: Started watching for movement.")
+            return True
+        logger.warning("Webcam: Already watching.")
+        return False
+
+    def watch_camera(self, watching, vison: list = []):
+        """Continuously monitor the webcam for motion."""
+        previous_frame = None
+        try:
+            while watching.value:
+                self.camera.grab()
+                ret, frame = self.camera.read()
+                if not ret:
+                    raise RuntimeError("Failed to capture frame.")
+
+                current_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                if previous_frame is None:
+                    previous_frame = current_frame
+                    frame_area = current_frame.size
+                    continue
+
+                frame_diff = cv2.absdiff(previous_frame, current_frame)
+                changed_pixels = np.sum(frame_diff > 10)
+                change_percentage = changed_pixels / frame_area
+
+                if change_percentage > 0.4:
+                    timestamp = time.strftime("%Y%m%d-%H%M%S")
+                    filepath = os.path.join(os.path.dirname(__file__), "images", f"movement_{timestamp}.jpg")
+                    cv2.imwrite(filepath, current_frame)
+
+                    if hasattr(self, "image_analyzer"):
+                        description = self.image_analyzer.describe(current_frame)
+                        vison.append(description)
+
+                    logger.info(f"Webcam: Movement detected and saved at {timestamp}")
+                    sleep_time = 20
+                else:
+                    sleep_time = 60
+
+                previous_frame = current_frame
+                time.sleep(sleep_time)
+
+        except KeyboardInterrupt:
+            logger.warning("Webcam: Interrupted by user.")
+        except Exception as e:
+            raise RuntimeError(f"Failed during motion detection: {e}")
+        finally:
+            self.camera.release()
+
+    def capture(self) -> np.ndarray:
+        """Capture a single frame from the webcam."""
+        if not self.camera.grab():
+            raise RuntimeError("Failed to grab frame.")
+        ret, frame = self.camera.retrieve()
+        if not ret:
+            raise RuntimeError("Failed to retrieve frame.")
+        return frame
+
+    def stop_watch(self) -> None:
+        """Stop the motion watching process."""
+        if self.process:
+            self.watching.value = False
+            self.process.join()
+            self.process = None
+        self.camera.release()
+
+Your code already does a thorough job of handling audio recording, format detection, and WAV conversion for backend compatibility. A few clarifications and improvements I can suggest for robustness:
+
+⸻
+
+1. MIME Type Selection
+	•	You correctly avoid MP3 due to FFmpeg issues.
+	•	Consider checking audio/webm;codecs=opus explicitly for better browser coverage:
+
+if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+  mimeType = 'audio/webm;codecs=opus';
+} else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+  mimeType = 'audio/ogg;codecs=opus';
+}
+
+
+⸻
+
+2. Handling Empty or Too Short Recordings
+	•	You already handle audioBlob.size < 100 and recordingDuration < 0.5s.
+	•	For better UX, you could combine checks and log more info:
+
+if (!audioBlob || audioBlob.size < 100 || recordingDuration < 0.5) {
+  console.warn(`Invalid recording: size=${audioBlob?.size}, duration=${recordingDuration}s`);
+  setRecordingError('Recording too short or invalid. Please try again.');
+  return;
+}
+
+
+⸻
+
+3. Audio Conversion
+	•	You correctly decode using AudioContext, render via OfflineAudioContext, and export as WAV.
+	•	One subtle improvement: Ensure length in OfflineAudioContext matches the new sample rate:
+
+const length = Math.floor(audioBuffer.length * sampleRate / audioBuffer.sampleRate);
+const offlineContext = new OfflineAudioContext(numberOfChannels, length, sampleRate);
+
+	•	This prevents playback speed issues when downsampling.
+
+⸻
+
+4. WAV Conversion
+	•	Your createWaveFileData correctly creates a PCM WAV file.
+	•	Optional improvement: normalize audio to avoid clipping:
+
+const maxSample = Math.max(...channelData[channel]);
+if (maxSample > 1) sample /= maxSample;
+
+
+⸻
+
+5. General Notes
+	•	Always ensure audioContextRef.current exists before conversion.
+	•	stream.getTracks().forEach(track => track.stop()) is good practice to free the mic.
+	•	For long recordings, consider streaming to backend directly instead of holding in memory.
+
+⸻
+
+✅ Summary:
+	•	Your current approach with MIME type detection, WAV conversion via OfflineAudioContext, and PCM export is solid for backend compatibility.
+	•	Minor enhancements involve codec checks, precise sample rate adjustment, and optional normalization for consistent volume.
+
+If you want, I can rewrite your processAudioBlob function to fully handle downsampling and mono conversion robustly in one clean snippet. Do you want me to do that?
+
+Here’s a detailed summary and analysis of your excerpt, focusing on the theoretical implications of first-person versus second-person prompting in LLMs:
+
+⸻
+
+Directive Prompting in LLMs: First-Person vs Second-Person
+
+Abstract
+	•	The paper proposes a framework for understanding how prompt perspective (“I am” vs “You are”) affects LLM outputs.
+	•	By integrating cognitive architecture, linguistics, and psychological models, it argues that first-person prompts enhance role embodiment and coherence.
+
+⸻
+
+1. Introduction
+	•	LLMs raise questions about self-representation and role adoption.
+	•	Different prompting strategies may modulate the model’s internal representation of roles.
+	•	Hypothesis: First-person prompts produce outputs that are more authentic and coherent, leveraging the model’s internal cognitive-like mechanisms.
+
+⸻
+
+2. Theoretical Framework
+
+2.1 Cognitive Architecture Perspective
+	•	LLMs use transformer architectures with multi-layered self-attention.
+	•	First-person prompts may:
+	•	Create stronger attention patterns linking role-specific knowledge to output tokens.
+	•	Facilitate direct “neural pathway activation” between the role and generated text.
+	•	Second-person prompts introduce a layer of indirection, possibly weakening attention to the intended role context.
+
+2.2 Linguistic Theory
+	•	Pragmatics and deixis (context-dependent reference) are key:
+	•	First-person pronouns position the model at the “deictic center”, the conceptual “here-and-now.”
+	•	Second-person pronouns place the model outside the center, creating indirectness that may reduce contextual fidelity.
+
+2.2.1 Deictic Center Theory
+	•	The deictic center is the viewpoint from which all references are made.
+	•	First-person prompting anchors the model at the center, improving:
+	•	Coherence of generated responses.
+	•	Contextually appropriate role embodiment.
+
+⸻
+
+Key Takeaways
+	1.	First-person prompting (“I am…”)
+	•	Anchors the model in the deictic center.
+	•	Strengthens attention patterns in the transformer.
+	•	Yields more coherent, authentic outputs aligned with the intended role.
+	2.	Second-person prompting (“You are…”)
+	•	Introduces linguistic indirection.
+	•	May weaken role embodiment and output coherence.
+	•	Could increase ambiguity in context interpretation.
+
+⸻
+
+Implications for Prompt Engineering
+	•	Role-specific LLM applications (chatbots, personal assistants, narrative agents) may benefit from first-person directives.
+	•	Aligning prompts with the model’s internal deictic center can improve response quality.
+	•	Suggests a broader framework where perspective, pronoun choice, and cognitive modeling inform prompt design.
+
+⸻
+
+If you want, I can create a diagram showing the attention pathways for first-person vs second-person prompts, which visually explains why first-person prompts strengthen role embodiment in LLMs. This could complement your theoretical framework nicely. Do you want me to do that?
+
+Here’s a structured summary and analysis of the continuation of your paper, focusing on the psychological, architectural, philosophical, and ethical dimensions of directive prompting in LLMs:
+
+⸻
+
+2.3 Psychological Models
+	•	Theory of Mind is applied to LLMs conceptually:
+	•	First-person prompting bypasses the need for perspective-taking (“translation” from second-person to self-concept), thereby more effectively activating learned expert behavior patterns.
+	•	Second-person prompting requires an additional cognitive step to translate instructions to a self-referential framework.
+
+⸻
+
+3. Theoretical Analysis
+
+3.1 Role Embodiment Mechanics
+	•	First-person pathway:
+
+[Role Knowledge] → [Direct Activation] → [Response Generation]
+
+
+	•	Second-person pathway:
+
+[Role Knowledge] → [Perspective Translation] → [Instruction Processing] → [Response Generation]
+
+
+	•	Interpretation: First-person prompts streamline knowledge activation, reducing the number of intermediate transformations required for coherent output.
+
+3.2 Attention Mechanism Implications
+	•	Transformer self-attention patterns are more efficient under first-person prompts:
+	•	Shorter token distances between role knowledge and output tokens.
+	•	Optimized activation of domain-specific behavior patterns.
+	•	Direct mapping between learned representations and response generation.
+
+⸻
+
+4. Philosophical Implications
+
+4.1 Symbol Grounding
+	•	First-person prompting helps LLMs link learned representations to outputs, providing a conceptual bridge to the symbol grounding problem.
+	•	Suggests a mechanism for direct symbolic manipulation in artificial systems.
+
+4.2 Consciousness and Self-Representation
+	•	While LLMs lack consciousness, first-person prompts reveal how language models can simulate self-representation, enhancing role authenticity in responses.
+
+⸻
+
+5. Ethical Considerations
+
+5.1 Authenticity and Deception
+	•	Enhanced fluency from first-person prompts may mislead users about AI capabilities.
+	•	Raises concerns about perceived authenticity and potential unintentional deception.
+
+5.2 Role Boundaries
+	•	Effective first-person prompting necessitates clear contextual boundaries:
+	•	Users must understand that the AI is simulating expertise, not actually possessing consciousness or professional judgment.
+
+⸻
+
+6. Discussion
+	•	First-person prompting aligns with cognitive architecture and linguistic pragmatics, leading to:
+	•	More efficient pathways for knowledge activation.
+	•	Greater coherence and authenticity in output.
+	•	Suggests a mechanistic explanation for why first-person directives outperform second-person prompts.
+
+⸻
+
+7. Conclusion
+	•	The effectiveness of first-person prompting is rooted in transformer architecture, deictic theory, and cognitive modeling.
+	•	Implications:
+	•	Practical: Improved prompt engineering for chatbots, narrative agents, and AI tutors.
+	•	Theoretical: Provides insights into symbolic representation, role embodiment, and artificial self-representation.
+	•	Highlights the importance of ethical use, ensuring AI remains a tool rather than a source of human-like deception.
+
+⸻
+
+Key Takeaways
+	1.	Cognitive Efficiency: First-person prompts reduce translation steps, directly linking knowledge to output.
+	2.	Attention Optimization: Transformer attention patterns are better aligned with role knowledge in first-person prompts.
+	3.	Philosophical Insight: Enhances understanding of symbol grounding and AI self-representation.
+	4.	Ethical Awareness: Fluent AI outputs require clear role and authenticity boundaries to prevent misunderstanding.
+
+⸻
+
+If you want, I can also draw a visual diagram of the first-person vs second-person prompting pathways, showing both the attention mechanism and role embodiment steps, which could make these concepts easier to grasp at a glance. This could be a nice figure for your paper. Do you want me to do that?
+
